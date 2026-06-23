@@ -1,0 +1,19 @@
+node_modules/
+build/
+dist/
+coverage/
+.vite/
+.DS_Store
+*.log
+.env*
+!.env.example
+
+# Python backend
+backend/.venv/
+__pycache__/
+*.pyc
+
+# Firebase service-account credentials — never commit these
+backend/serviceAccount*.json
+backend/firebase*.json
+**/serviceAccountKey.json
