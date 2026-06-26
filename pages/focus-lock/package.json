@@ -1,0 +1,35 @@
+{
+  "name": "@extension/focus-lock",
+  "version": "0.5.0",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "clean:bundle": "rimraf dist",
+    "clean:node_modules": "pnpx rimraf node_modules",
+    "clean:turbo": "rimraf .turbo",
+    "clean": "pnpm clean:bundle && pnpm clean:node_modules && pnpm clean:turbo",
+    "ready": "tsc --noEmit",
+    "build": "vite build",
+    "dev": "vite build --mode development",
+    "lint": "eslint src",
+    "lint:fix": "pnpm lint --fix",
+    "prettier": "prettier src --write --ignore-path ../../.prettierignore",
+    "type-check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@extension/storage": "workspace:*",
+    "@extension/ui": "workspace:*",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0"
+  },
+  "devDependencies": {
+    "@extension/dev-utils": "workspace:*",
+    "@extension/hmr": "workspace:*",
+    "@extension/tsconfig": "workspace:*",
+    "@extension/types": "workspace:*",
+    "@extension/vite-config": "workspace:*",
+    "@types/node": "^22.15.21",
+    "@types/react": "^19.1.5",
+    "@types/react-dom": "^19.1.5"
+  }
+}
