@@ -23,7 +23,7 @@ API_KEY = os.environ.get("GEMINI_API_KEY")
 MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.5-flash")
 
 BASE_SYSTEM = """\
-You are the intelligence engine for "The Last-Minute Life Saver," a proactive \
+You are the intelligence engine for "Task Weave," a proactive \
 productivity app that cures procrastination by forcing meaningful, low-friction \
 action instead of passive reminders.
 
@@ -77,6 +77,7 @@ class Status(str, Enum):
     TODO = "TODO"
     IN_PROGRESS = "IN_PROGRESS"
     COMPLETED = "COMPLETED"
+    ARCHIVED = "ARCHIVED"
 
 
 class Urgency(str, Enum):

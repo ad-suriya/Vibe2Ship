@@ -1,156 +1,102 @@
-import { createStorage, StorageEnum } from '../base/index.js';
+import { request, mapApiSession } from './backend-client.js';
+import type { ApiSession } from './backend-client.js';
 import type { FocusSession, FocusSessionCreateInput } from '@extension/types';
 
-interface FocusSessionStorageState {
-  sessions: FocusSession[];
-  activeSessionId?: string;
+async function fetchCurrent(): Promise<FocusSession | null> {
+  const sessions = await request<ApiSession[]>('/sessions');
+  const active = sessions.filter(s => !s.end_time).sort((a, b) => b.id - a.id)[0];
+  return active ? mapApiSession(active) : null;
 }
 
-const storage = createStorage<FocusSessionStorageState>(
-  'focus-session-storage-key',
-  {
-    sessions: [],
-    activeSessionId: undefined,
-  },
-  {
-    storageEnum: StorageEnum.Local,
-    liveUpdate: true,
-  },
-);
-
 export const focusSessionStorage = {
-  ...storage,
-  createSession: async (input: FocusSessionCreateInput) => {
-    const newSession: FocusSession = {
-      id: Date.now().toString(),
-      startTime: Date.now(),
-      durationMinutes: input.durationMinutes,
-      mode: input.mode,
-      associatedTaskId: input.associatedTaskId,
-      isActive: true,
-      blockedSites: input.blockedSites || [],
-      breaksTaken: 0,
-      totalBreakMinutes: 0,
-      lastModified: Date.now(),
-      syncedToMobile: false,
-    };
+  createSession: async (input: FocusSessionCreateInput): Promise<FocusSession> => {
+    const created = await request<ApiSession>('/sessions', {
+      method: 'POST',
+      body: JSON.stringify({ description: '' }),
+    });
+    if (input.durationMinutes) {
+      await request<ApiSession>(`/sessions/${created.id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ duration_minutes: input.durationMinutes }),
+      });
+    }
+    return fetchCurrent() as Promise<FocusSession>;
+  },
 
-    await storage.set(currentState => ({
-      ...currentState,
-      sessions: [...currentState.sessions, newSession],
-      activeSessionId: newSession.id,
-    }));
+  getActiveSession: fetchCurrent,
+  getCurrent: fetchCurrent,
 
-    return newSession;
+  update: async (id: string, updates: Partial<FocusSession>): Promise<void> => {
+    const patch: Record<string, unknown> = {};
+    if (updates.durationMinutes !== undefined) patch.duration_minutes = updates.durationMinutes;
+    if (updates.description !== undefined) patch.description = updates.description;
+    if (updates.projectId !== undefined) patch.project_id = Number(updates.projectId);
+    if (updates.endTime !== undefined) patch.end_time = new Date(updates.endTime).toISOString();
+    await request<ApiSession>(`/sessions/${id}`, { method: 'PATCH', body: JSON.stringify(patch) });
   },
-  getActiveSession: async () => {
-    const state = await storage.get();
-    if (!state.activeSessionId) return null;
-    return state.sessions.find(s => s.id === state.activeSessionId) || null;
+
+  pause: async (): Promise<void> => {
+    const current = await fetchCurrent();
+    if (!current) return;
+    await request<ApiSession>(`/sessions/${current.id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ is_paused: true }),
+    });
   },
-  getCurrent: async () => {
-    const state = await storage.get();
-    if (!state.activeSessionId) return null;
-    return state.sessions.find(s => s.id === state.activeSessionId) || null;
+
+  takeBreak: async (durationMinutes: number = 5): Promise<void> => {
+    const current = await fetchCurrent();
+    if (!current) return;
+    await request<ApiSession>(`/sessions/${current.id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({
+        breaks_taken: current.breaksTaken + 1,
+        total_break_minutes: current.totalBreakMinutes + durationMinutes,
+      }),
+    });
   },
-  update: async (id: string, updates: Partial<FocusSession>) => {
-    await storage.set(currentState => ({
-      ...currentState,
-      sessions: currentState.sessions.map(session =>
-        session.id === id
-          ? { ...session, ...updates, lastModified: Date.now() }
-          : session,
-      ),
-    }));
+
+  end: async (): Promise<void> => {
+    const current = await fetchCurrent();
+    if (!current) return;
+    await request<ApiSession>(`/sessions/${current.id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ end_time: new Date().toISOString() }),
+    });
   },
-  pause: async () => {
-    const state = await storage.get();
-    if (!state.activeSessionId) return;
-    await storage.set(currentState => ({
-      ...currentState,
-      sessions: currentState.sessions.map(session =>
-        session.id === state.activeSessionId
-          ? { ...session, isActive: false, lastModified: Date.now() }
-          : session,
-      ),
-    }));
-  },
-  takeBreak: async (durationMinutes: number = 5) => {
-    const state = await storage.get();
-    if (!state.activeSessionId) return;
-    await storage.set(currentState => ({
-      ...currentState,
-      sessions: currentState.sessions.map(session =>
-        session.id === state.activeSessionId
-          ? { ...session, breaksTaken: session.breaksTaken + 1, totalBreakMinutes: session.totalBreakMinutes + durationMinutes, lastModified: Date.now() }
-          : session,
-      ),
-    }));
-  },
-  end: async () => {
-    const state = await storage.get();
-    if (!state.activeSessionId) return;
-    await storage.set(currentState => ({
-      ...currentState,
-      sessions: currentState.sessions.map(session =>
-        session.id === state.activeSessionId
-          ? { ...session, endTime: Date.now(), isActive: false, lastModified: Date.now() }
-          : session,
-      ),
-      activeSessionId: undefined,
-    }));
-  },
+
   startTracking: async (input: {
     description?: string;
     projectId?: string;
     projectName?: string;
     projectColor?: string;
-  }) => {
-    const newSession: FocusSession = {
-      id: Date.now().toString(),
-      startTime: Date.now(),
-      durationMinutes: 0,
-      mode: 'custom',
-      isActive: true,
-      blockedSites: [],
-      breaksTaken: 0,
-      totalBreakMinutes: 0,
-      lastModified: Date.now(),
-      syncedToMobile: false,
-      description: input.description,
-      projectId: input.projectId,
-      projectName: input.projectName,
-      projectColor: input.projectColor,
-    };
-
-    await storage.set(currentState => ({
-      ...currentState,
-      sessions: [...currentState.sessions, newSession],
-      activeSessionId: newSession.id,
-    }));
-
-    return newSession;
+    durationMinutes?: number;
+  }): Promise<FocusSession> => {
+    const created = await request<ApiSession>('/sessions', {
+      method: 'POST',
+      body: JSON.stringify({
+        description: input.description || '',
+        project_id: input.projectId ? Number(input.projectId) : undefined,
+        duration_minutes: input.durationMinutes ?? 25,
+      }),
+    });
+    return mapApiSession(created);
   },
+
   stopTracking: async (): Promise<FocusSession | null> => {
-    const state = await storage.get();
-    if (!state.activeSessionId) return null;
-
-    const endTime = Date.now();
-    await storage.set(currentState => ({
-      ...currentState,
-      sessions: currentState.sessions.map(session =>
-        session.id === state.activeSessionId
-          ? { ...session, endTime, isActive: false, lastModified: Date.now() }
-          : session,
-      ),
-      activeSessionId: undefined,
-    }));
-
-    const updatedState = await storage.get();
-    return updatedState.sessions.find(s => s.id === state.activeSessionId) || null;
+    const current = await fetchCurrent();
+    if (!current) return null;
+    const updated = await request<ApiSession>(`/sessions/${current.id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ end_time: new Date().toISOString() }),
+    });
+    return mapApiSession(updated);
   },
-  getSessionsSince: async (timestamp: number) => {
-    const state = await storage.get();
-    return state.sessions.filter(s => s.startTime >= timestamp);
+
+  getSessionsSince: async (timestamp: number): Promise<FocusSession[]> => {
+    const sessions = await request<ApiSession[]>('/sessions');
+    return sessions
+      .filter(s => Date.parse(s.start_time) >= timestamp)
+      .map(mapApiSession);
   },
 };

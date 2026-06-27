@@ -1,96 +1,56 @@
-import { createStorage, StorageEnum } from '../base/index.js';
+import { request, mapApiTask, mapExtTaskToApiCreate, mapExtTaskUpdatesToApiPatch } from './backend-client.js';
+import type { ApiTask } from './backend-client.js';
 import type { Task, TaskQueryOptions, TaskUpdatePayload } from '@extension/types';
 
-interface TasksStorageState {
-  tasks: Task[];
+function applyQuery(tasks: Task[], options?: TaskQueryOptions): Task[] {
+  let filtered = tasks;
+
+  if (options?.status) {
+    const statuses = Array.isArray(options.status) ? options.status : [options.status];
+    filtered = filtered.filter(t => statuses.includes(t.status));
+  }
+
+  if (options?.priority) {
+    const priorities = Array.isArray(options.priority) ? options.priority : [options.priority];
+    filtered = filtered.filter(t => priorities.includes(t.priority));
+  }
+
+  if (options?.limit) {
+    filtered = filtered.slice(0, options.limit);
+  }
+
+  return filtered;
 }
 
-const storage = createStorage<TasksStorageState>(
-  'tasks-storage-key',
-  {
-    tasks: [],
-  },
-  {
-    storageEnum: StorageEnum.Local,
-    liveUpdate: true,
-  },
-);
+async function fetchAll(): Promise<Task[]> {
+  const tasks = await request<ApiTask[]>('/tasks');
+  return tasks.map(mapApiTask);
+}
 
 export const tasksStorage = {
-  ...storage,
-  addTask: async (task: Omit<Task, 'id' | 'createdAt' | 'lastModified'>) => {
-    const newTask: Task = {
-      ...task,
-      id: Date.now().toString(),
-      createdAt: Date.now(),
-      lastModified: Date.now(),
-    };
-
-    await storage.set(currentState => ({
-      ...currentState,
-      tasks: [...currentState.tasks, newTask],
-    }));
-
-    return newTask;
+  addTask: async (task: Omit<Task, 'id' | 'createdAt' | 'lastModified'>): Promise<Task> => {
+    const created = await request<ApiTask>('/tasks', {
+      method: 'POST',
+      body: JSON.stringify(mapExtTaskToApiCreate(task)),
+    });
+    return mapApiTask(created);
   },
-  updateTask: async (id: string, updates: TaskUpdatePayload) => {
-    await storage.set(currentState => ({
-      ...currentState,
-      tasks: currentState.tasks.map(task =>
-        task.id === id
-          ? { ...task, ...updates, lastModified: Date.now() }
-          : task,
-      ),
-    }));
+
+  updateTask: async (id: string, updates: TaskUpdatePayload): Promise<void> => {
+    await request<ApiTask>(`/tasks/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(mapExtTaskUpdatesToApiPatch(updates)),
+    });
   },
-  getTasks: async (options?: TaskQueryOptions) => {
-    const state = await storage.get();
-    let filtered = state.tasks;
 
-    if (options?.status) {
-      const statuses = Array.isArray(options.status) ? options.status : [options.status];
-      filtered = filtered.filter(t => statuses.includes(t.status));
-    }
+  getTasks: async (options?: TaskQueryOptions): Promise<Task[]> => applyQuery(await fetchAll(), options),
 
-    if (options?.priority) {
-      const priorities = Array.isArray(options.priority) ? options.priority : [options.priority];
-      filtered = filtered.filter(t => priorities.includes(t.priority));
-    }
+  query: async (options?: TaskQueryOptions): Promise<Task[]> => applyQuery(await fetchAll(), options),
 
-    if (options?.limit) {
-      filtered = filtered.slice(0, options.limit);
-    }
-
-    return filtered;
-  },
-  query: async (options?: TaskQueryOptions) => {
-    const state = await storage.get();
-    let filtered = state.tasks;
-
-    if (options?.status) {
-      const statuses = Array.isArray(options.status) ? options.status : [options.status];
-      filtered = filtered.filter(t => statuses.includes(t.status));
-    }
-
-    if (options?.priority) {
-      const priorities = Array.isArray(options.priority) ? options.priority : [options.priority];
-      filtered = filtered.filter(t => priorities.includes(t.priority));
-    }
-
-    if (options?.limit) {
-      filtered = filtered.slice(0, options.limit);
-    }
-
-    return filtered;
-  },
-  update: async (id: string, updates: TaskUpdatePayload) => {
-    await storage.set(currentState => ({
-      ...currentState,
-      tasks: currentState.tasks.map(task =>
-        task.id === id
-          ? { ...task, ...updates, lastModified: Date.now() }
-          : task,
-      ),
-    }));
+  update: async (id: string, updates: TaskUpdatePayload): Promise<void> => {
+    await request<ApiTask>(`/tasks/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(mapExtTaskUpdatesToApiPatch(updates)),
+    });
   },
 };

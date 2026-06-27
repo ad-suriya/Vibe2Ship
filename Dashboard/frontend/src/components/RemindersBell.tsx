@@ -27,7 +27,7 @@ export default function RemindersBell() {
     if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
     for (const r of items) {
       if (r.due && !r.acknowledged && !notifiedRef.current.has(r.id)) {
-        new Notification('Last-Minute Life Saver', { body: r.message });
+        new Notification('Task Weave', { body: r.message });
         notifiedRef.current.add(r.id);
       }
     }

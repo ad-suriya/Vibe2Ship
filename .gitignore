@@ -15,6 +15,7 @@ tsconfig.tsbuildinfo
 # env
 **/.env.*
 **/.env
+client_secret_*.json
 
 # etc
 .DS_Store
@@ -30,7 +31,7 @@ tsconfig.tsbuildinfo
 **/*.pyo
 **/*.pyd
 **/.Python
-**/env/
+Dashboard/backend/env/
 **/venv/
 **/.venv
 

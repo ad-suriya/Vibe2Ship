@@ -44,6 +44,23 @@ export interface Task {
   scheduled_start: string | null;
   scheduled_end: string | null;
   goal_id: number | null;
+  calendar_event_id: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+// A focus/work-timer session — the same resource the Chrome extension's
+// popup polls, so starting one here makes the extension reflect it too.
+export interface Session {
+  id: number;
+  description: string;
+  project_id: number | null;
+  start_time: string;
+  end_time: string | null;
+  duration_minutes: number;
+  is_paused: boolean;
+  breaks_taken: number;
+  total_break_minutes: number;
   created_at: string;
   updated_at: string;
 }

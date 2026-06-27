@@ -53,7 +53,7 @@ def _vevent(task: dict) -> list[str]:
         desc = f"{desc}\nDeadline: {task['deadline']}"
     return [
         "BEGIN:VEVENT",
-        f"UID:lmls-task-{task['id']}@last-minute-life-saver",
+        f"UID:taskweave-task-{task['id']}@task-weave",
         f"DTSTAMP:{stamp}",
         f"DTSTART:{_fmt(start)}",
         f"DTEND:{_fmt(end)}",
@@ -67,7 +67,7 @@ def calendar(tasks: list[dict]) -> str:
     lines = [
         "BEGIN:VCALENDAR",
         "VERSION:2.0",
-        "PRODID:-//Last-Minute Life Saver//EN",
+        "PRODID:-//Task Weave//EN",
         "CALSCALE:GREGORIAN",
     ]
     for task in tasks:

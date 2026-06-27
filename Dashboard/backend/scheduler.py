@@ -35,18 +35,32 @@ def _next_work_slot(cursor: datetime) -> datetime:
     return cursor.replace(second=0, microsecond=0)
 
 
+def _next_free_slot(cursor: datetime, busy: list[tuple[datetime, datetime]]) -> datetime:
+    """Push the cursor past any Google Calendar event it would otherwise land in."""
+    for start, end in busy:
+        if start <= cursor < end:
+            return end
+    return cursor
+
+
 def _priority_key(task: dict):
     deadline = _parse(task.get("deadline")) or FAR_FUTURE
     return (URGENCY_RANK.get(task.get("urgency", "MEDIUM"), 1), deadline, task["id"])
 
 
-def build_schedule(tasks: list[dict], now: Optional[datetime] = None) -> dict:
+def build_schedule(tasks: list[dict], now: Optional[datetime] = None,
+                    busy: Optional[list[tuple[datetime, datetime]]] = None) -> dict:
     """Pack non-completed tasks into time blocks starting from `now`.
+
+    `busy` is a list of (start, end) windows already occupied on the user's
+    real Google Calendar (read via calendar_sync.list_busy) — blocks are
+    routed around them so the plan never double-books an existing event.
 
     Returns {"blocks": [{task_id, scheduled_start, scheduled_end}], "at_risk": [task_id]}.
     """
     now = now or datetime.now()
-    open_tasks = [t for t in tasks if t.get("status") != "COMPLETED"]
+    busy = sorted(busy or [])
+    open_tasks = [t for t in tasks if t.get("status") not in ("COMPLETED", "ARCHIVED")]
     ordered = sorted(open_tasks, key=_priority_key)
 
     cursor = _next_work_slot(now.replace(second=0, microsecond=0))
@@ -60,10 +74,16 @@ def build_schedule(tasks: list[dict], now: Optional[datetime] = None) -> dict:
 
         while remaining > 0:
             cursor = _next_work_slot(cursor)
+            cursor = _next_free_slot(cursor, busy)
+            cursor = _next_work_slot(cursor)
             # Minutes left in the working day from the cursor.
             day_end = cursor.replace(hour=WORK_END_HOUR, minute=0, second=0, microsecond=0)
             minutes_left_today = int((day_end - cursor).total_seconds() // 60)
             chunk = min(remaining, MAX_BLOCK_MINUTES, minutes_left_today)
+            # Don't run into a later busy event today.
+            upcoming = [b_start for b_start, _ in busy if cursor < b_start < day_end]
+            if upcoming:
+                chunk = min(chunk, int((min(upcoming) - cursor).total_seconds() // 60))
             if chunk <= 0:
                 # No room today; jump to tomorrow's work start.
                 cursor = _next_work_slot(day_end)
@@ -97,7 +117,7 @@ def analyze(tasks: list[dict], now: Optional[datetime] = None) -> dict:
     at_risk: list[int] = []   # scheduled to finish after its deadline
 
     for t in tasks:
-        if t.get("status") == "COMPLETED":
+        if t.get("status") in ("COMPLETED", "ARCHIVED"):
             continue
         deadline = _parse(t.get("deadline"))
         sched_start = _parse(t.get("scheduled_start"))

@@ -27,6 +27,10 @@ const configs = Object.entries(getContentScriptEntries(matchesDir)).map(([name, 
         fileName: name,
       },
       outDir: resolve(rootDir, '..', '..', 'dist', 'content'),
+      // Multiple entries share this outDir and build concurrently (Promise.all below).
+      // emptyOutDir would race between them and wipe sibling output; `clean:bundle`
+      // (rimraf dist) already runs before this script, so the dir starts clean anyway.
+      emptyOutDir: false,
     },
   });
 });

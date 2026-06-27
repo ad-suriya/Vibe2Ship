@@ -13,6 +13,8 @@ A comprehensive Chrome extension for managing tasks, habits, goals, and focus se
 - **Goal Management**: Set and monitor your goals
 - **Time Tracking**: Monitor focus sessions and productivity
 - **Sync Storage**: Synchronized storage across all extension pages
+- **Google Sign-In**: Authenticate via Google OAuth (`Dashboard/backend/auth.py`)
+- **Google Calendar Sync** *(planned)*: two-way sync between the AI-generated time-blocked schedule and the user's Google Calendar — avoid conflicts when scheduling focus blocks, and surface planned blocks/deadlines on the user's calendar
 
 ## Tech Stack
 
@@ -119,6 +121,10 @@ npm run dev
 ### Environment Variables
 
 See `.example.env` for available environment variables.
+
+For Google Calendar sync (`Dashboard/backend/calendar_sync.py`), set in `Dashboard/.env`:
+- `GOOGLE_OAUTH_CLIENT_ID` — defaults to the same client id used for sign-in
+- `GOOGLE_OAUTH_CLIENT_SECRET` — required; create a Web application OAuth client in Google Cloud Console with the `https://www.googleapis.com/auth/calendar.events` scope enabled
 
 ## Acknowledgments
 

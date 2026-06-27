@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useStorage, withErrorBoundary, withSuspense } from '@extension/shared';
-import { exampleThemeStorage } from '@extension/storage';
+import { exampleThemeStorage, tasksStorage } from '@extension/storage';
 import { cn, LoadingSpinner, ErrorDisplay } from '@extension/ui';
 
 interface PageContext {
@@ -10,26 +10,18 @@ interface PageContext {
   selectedText?: string;
 }
 
-const API_BASE = 'http://localhost:8000/api';
-
-async function createTaskOnDashboard(taskName: string, description?: string) {
-  const res = await fetch(`${API_BASE}/tasks`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      task_name: taskName,
-      urgency: 'MEDIUM',
-      estimated_minutes: 30,
-      next_micro_step: description || '',
-    }),
+async function createTaskOnDashboard(taskName: string, description?: string, url?: string, selectedText?: string) {
+  return tasksStorage.addTask({
+    title: taskName,
+    description,
+    url,
+    selectedText,
+    priority: 'medium',
+    tags: [],
+    status: 'todo',
+    estimatedMinutes: 30,
+    syncedToMobile: false,
   });
-
-  if (!res.ok) {
-    const data = await res.json().catch(() => ({ detail: res.statusText }));
-    throw new Error(data.detail || 'Failed to create task');
-  }
-
-  return res.json();
 }
 
 function TaskCaptureContent() {
@@ -94,7 +86,7 @@ function TaskCaptureContent() {
     setError(null);
 
     try {
-      await createTaskOnDashboard(taskName.trim(), description.trim());
+      await createTaskOnDashboard(taskName.trim(), description.trim(), context.url, context.selectedText);
       setSuccess(true);
 
       setTimeout(() => {
@@ -108,78 +100,94 @@ function TaskCaptureContent() {
   };
 
   return (
-    <div className={cn('min-h-screen p-6', isLight ? 'bg-gray-50' : 'bg-slate-950')}>
+    <div className={cn('min-h-screen p-6 font-sans', isLight ? 'bg-paper' : 'bg-ink')}>
       <div className="mx-auto max-w-2xl">
         <div className="space-y-6">
           <div>
-            <h1 className={cn('text-3xl font-bold', isLight ? 'text-gray-900' : 'text-white')}>
+            <h1 className={cn('font-serif italic font-black text-3xl', isLight ? 'text-ink' : 'text-paper')}>
               Capture Task
             </h1>
-            <p className={cn('mt-2', isLight ? 'text-gray-600' : 'text-gray-400')}>
-              Save to your Last-Minute Life Saver task list
+            <p className={cn('mt-2 text-xs uppercase tracking-widest', isLight ? 'text-ink/60' : 'text-paper/60')}>
+              Save to your Task Weave task list
             </p>
           </div>
 
           {context.url && (
-            <div className={cn('rounded-lg p-4', isLight ? 'bg-white border border-gray-200' : 'bg-slate-800 border border-slate-700')}>
-              <p className={cn('text-sm', isLight ? 'text-gray-600' : 'text-gray-400')}>From current tab:</p>
-              <p className={cn('mt-1 truncate font-semibold', isLight ? 'text-gray-900' : 'text-white')}>
-                {context.title}
+            <div className={cn('border p-4', isLight ? 'bg-white border-ink/15' : 'bg-ink border-paper/20')}>
+              <p className={cn('text-[10px] uppercase tracking-widest', isLight ? 'text-ink/60' : 'text-paper/60')}>
+                From current tab:
               </p>
-              <p className={cn('mt-1 truncate text-xs', isLight ? 'text-gray-500' : 'text-gray-500')}>
-                {context.url}
-              </p>
+              <p className={cn('mt-1 truncate font-semibold', isLight ? 'text-ink' : 'text-paper')}>{context.title}</p>
+              <p className={cn('mt-1 truncate text-xs', isLight ? 'text-ink/50' : 'text-paper/50')}>{context.url}</p>
             </div>
           )}
 
-          <div className={cn('rounded-lg p-6 shadow-sm', isLight ? 'bg-white' : 'bg-slate-800')}>
+          <div
+            className={cn(
+              'border p-6',
+              isLight
+                ? 'bg-white border-ink shadow-[6px_6px_0px_0px_#1A1A1A]'
+                : 'bg-ink border-paper shadow-[6px_6px_0px_0px_#F5F2ED]',
+            )}>
             {success ? (
               <div className="text-center">
-                <div className={cn('mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full', isLight ? 'bg-green-100' : 'bg-green-900')}>
+                <div
+                  className={cn(
+                    'mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full border',
+                    isLight ? 'border-planning text-planning' : 'border-planning text-planning',
+                  )}>
                   <span className="text-2xl">✓</span>
                 </div>
-                <h2 className={cn('text-lg font-semibold', isLight ? 'text-gray-900' : 'text-white')}>
+                <h2 className={cn('font-serif font-black text-lg', isLight ? 'text-ink' : 'text-paper')}>
                   Task Created!
                 </h2>
-                <p className={cn('mt-1 text-sm', isLight ? 'text-gray-600' : 'text-gray-400')}>
+                <p className={cn('mt-1 text-xs uppercase tracking-widest', isLight ? 'text-ink/60' : 'text-paper/60')}>
                   Added to Dashboard
                 </p>
               </div>
             ) : (
               <form onSubmit={handleSubmit} className="space-y-4">
                 <div>
-                  <label className={cn('block text-sm font-medium mb-1', isLight ? 'text-gray-700' : 'text-gray-300')}>
+                  <label
+                    className={cn(
+                      'block text-[10px] uppercase tracking-widest font-bold mb-1',
+                      isLight ? 'text-ink/70' : 'text-paper/70',
+                    )}>
                     Task Name *
                   </label>
                   <input
                     type="text"
                     value={taskName}
-                    onChange={(e) => setTaskName(e.target.value)}
+                    onChange={e => setTaskName(e.target.value)}
                     placeholder="What needs to be done?"
                     className={cn(
-                      'w-full px-3 py-2 rounded border focus:outline-none',
+                      'w-full px-3 py-2 border focus:outline-none',
                       isLight
-                        ? 'bg-white border-gray-300 text-gray-900 focus:border-purple-500'
-                        : 'bg-slate-700 border-slate-600 text-white focus:border-purple-500',
+                        ? 'bg-white border-ink/30 text-ink focus:border-ink'
+                        : 'bg-ink border-paper/30 text-paper focus:border-paper',
                     )}
                     disabled={isLoading}
                   />
                 </div>
 
                 <div>
-                  <label className={cn('block text-sm font-medium mb-1', isLight ? 'text-gray-700' : 'text-gray-300')}>
+                  <label
+                    className={cn(
+                      'block text-[10px] uppercase tracking-widest font-bold mb-1',
+                      isLight ? 'text-ink/70' : 'text-paper/70',
+                    )}>
                     Next Step / Details
                   </label>
                   <textarea
                     value={description}
-                    onChange={(e) => setDescription(e.target.value)}
+                    onChange={e => setDescription(e.target.value)}
                     placeholder="Break it into the smallest next step..."
                     rows={3}
                     className={cn(
-                      'w-full px-3 py-2 rounded border focus:outline-none resize-none',
+                      'w-full px-3 py-2 border focus:outline-none resize-none',
                       isLight
-                        ? 'bg-white border-gray-300 text-gray-900 focus:border-purple-500'
-                        : 'bg-slate-700 border-slate-600 text-white focus:border-purple-500',
+                        ? 'bg-white border-ink/30 text-ink focus:border-ink'
+                        : 'bg-ink border-paper/30 text-paper focus:border-paper',
                     )}
                     disabled={isLoading}
                   />
@@ -189,10 +197,10 @@ function TaskCaptureContent() {
                   type="submit"
                   disabled={isLoading || !taskName.trim()}
                   className={cn(
-                    'w-full py-2 rounded font-semibold transition-all',
+                    'w-full py-2 font-bold uppercase tracking-widest text-sm transition-all border',
                     isLight
-                      ? 'bg-purple-600 text-white hover:bg-purple-700 disabled:opacity-50'
-                      : 'bg-purple-500 text-white hover:bg-purple-600 disabled:opacity-50',
+                      ? 'bg-ink text-paper border-ink shadow-[3px_3px_0px_0px_#D14D2A] hover:bg-[#333] disabled:opacity-50'
+                      : 'bg-paper text-ink border-paper shadow-[3px_3px_0px_0px_#D14D2A] hover:bg-gray-200 disabled:opacity-50',
                   )}>
                   {isLoading ? 'Creating...' : 'Create Task'}
                 </button>
@@ -201,8 +209,8 @@ function TaskCaptureContent() {
           </div>
 
           {error && (
-            <div className={cn('rounded-lg border p-4', isLight ? 'border-red-200 bg-red-50' : 'border-red-900 bg-red-900/20')}>
-              <p className={cn('text-sm font-medium', isLight ? 'text-red-800' : 'text-red-200')}>{error}</p>
+            <div className={cn('border p-4', isLight ? 'border-panic bg-panic/10' : 'border-panic bg-panic/20')}>
+              <p className={cn('text-sm font-medium', isLight ? 'text-panic' : 'text-panic')}>{error}</p>
             </div>
           )}
         </div>

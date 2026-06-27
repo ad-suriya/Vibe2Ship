@@ -87,35 +87,30 @@ const SidePanel = () => {
   }
 
   return (
-    <div className={cn('h-screen flex flex-col', isLight ? 'bg-white text-gray-900' : 'bg-gray-900 text-white')}>
-      <div className="flex items-center justify-between p-4 border-b border-gray-200 dark:border-gray-700">
-        <h2 className="font-semibold">Productivity</h2>
+    <div className={cn('h-screen flex flex-col font-sans', isLight ? 'bg-paper text-ink' : 'bg-ink text-paper')}>
+      <div className={cn('flex items-center justify-between p-4 border-b', isLight ? 'border-ink/15' : 'border-paper/20')}>
+        <h2 className="font-serif italic font-black text-xl">Productivity</h2>
         <ToggleButton>{t('toggleTheme')}</ToggleButton>
       </div>
 
       <div className="flex-1 overflow-y-auto p-4 space-y-4">
         {focusSession?.isActive ? (
           <>
-            <div className="bg-blue-50 dark:bg-blue-900/20 rounded-lg p-4">
-              <p className="text-xs font-semibold text-blue-600 dark:text-blue-400 mb-3">
-                🎯 FOCUS ACTIVE
-              </p>
-              <FocusTimer
-                session={focusSession}
-                onPause={handlePauseClick}
-                onBreak={handleBreakClick}
-                onEnd={handleEndClick}
-              />
+            <div
+              className={cn(
+                'border p-4',
+                isLight ? 'bg-ink text-paper border-ink shadow-[5px_5px_0px_0px_#D14D2A]' : 'bg-paper text-ink border-paper shadow-[5px_5px_0px_0px_#D14D2A]',
+              )}>
+              <p className="text-[10px] uppercase tracking-widest font-bold mb-3 opacity-70">Focus Active</p>
+              <FocusTimer session={focusSession} onPause={handlePauseClick} onBreak={handleBreakClick} onEnd={handleEndClick} />
             </div>
 
             <div className="space-y-2">
-              <h3 className="text-xs font-semibold uppercase opacity-70">Tasks This Session</h3>
+              <h3 className="text-[10px] uppercase tracking-widest font-bold opacity-60">Tasks This Session</h3>
               {focusSession.associatedTaskId && (
-                <div className="bg-gray-100 dark:bg-gray-800 rounded p-2 text-sm">
+                <div className={cn('border p-2 text-sm', isLight ? 'border-ink/15' : 'border-paper/20')}>
                   <p className="opacity-70">Associated task ID:</p>
-                  <p className="font-mono text-xs opacity-50 break-all">
-                    {focusSession.associatedTaskId}
-                  </p>
+                  <p className="font-mono text-xs opacity-50 break-all">{focusSession.associatedTaskId}</p>
                 </div>
               )}
             </div>
@@ -126,20 +121,28 @@ const SidePanel = () => {
               <button
                 onClick={() => setActiveTab('focus')}
                 className={cn(
-                  'flex-1 px-3 py-2 rounded-lg text-sm font-medium transition-colors',
+                  'flex-1 px-3 py-2 text-[10px] uppercase tracking-widest font-bold border transition-colors',
                   activeTab === 'focus'
-                    ? 'bg-blue-600 text-white'
-                    : 'bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600',
+                    ? isLight
+                      ? 'bg-ink text-paper border-ink'
+                      : 'bg-paper text-ink border-paper'
+                    : isLight
+                      ? 'border-ink/30 hover:bg-ink/10'
+                      : 'border-paper/30 hover:bg-paper/10',
                 )}>
                 Focus
               </button>
               <button
                 onClick={() => setActiveTab('tasks')}
                 className={cn(
-                  'flex-1 px-3 py-2 rounded-lg text-sm font-medium transition-colors',
+                  'flex-1 px-3 py-2 text-[10px] uppercase tracking-widest font-bold border transition-colors',
                   activeTab === 'tasks'
-                    ? 'bg-blue-600 text-white'
-                    : 'bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600',
+                    ? isLight
+                      ? 'bg-ink text-paper border-ink'
+                      : 'bg-paper text-ink border-paper'
+                    : isLight
+                      ? 'border-ink/30 hover:bg-ink/10'
+                      : 'border-paper/30 hover:bg-paper/10',
                 )}>
                 Tasks ({tasks.length})
               </button>
@@ -147,9 +150,8 @@ const SidePanel = () => {
 
             {activeTab === 'focus' && (
               <div className="text-center space-y-3 py-8 opacity-75">
-                <div className="text-5xl">😴</div>
                 <p className="text-sm">No active focus session</p>
-                <p className="text-xs opacity-70">Start a focus session from the popup</p>
+                <p className="text-xs uppercase tracking-widest opacity-70">Start a focus session from the popup</p>
               </div>
             )}
 
@@ -164,18 +166,20 @@ const SidePanel = () => {
                     <div
                       key={task.id}
                       className={cn(
-                        'rounded-lg p-3 cursor-pointer transition-colors',
+                        'border p-3 cursor-pointer transition-colors',
                         task.status === 'in-progress'
-                          ? 'bg-blue-100 dark:bg-blue-900/30 border-l-4 border-blue-500'
-                          : 'bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700',
+                          ? 'border-l-4 border-l-planning border-y-ink/15 border-r-ink/15 dark:border-y-paper/15 dark:border-r-paper/15'
+                          : isLight
+                            ? 'border-ink/15 hover:bg-ink/5'
+                            : 'border-paper/20 hover:bg-paper/5',
                       )}
                       onClick={() => handleTaskClick(task.id)}>
                       <div className="flex items-start justify-between gap-2">
                         <div className="flex-1 min-w-0">
                           <p className="text-sm font-medium truncate">{task.title}</p>
                           {task.priority !== 'medium' && (
-                            <p className="text-xs opacity-70">
-                              {task.priority === 'high' ? '🔴' : '🟢'} {task.priority}
+                            <p className={cn('text-[10px] uppercase tracking-widest font-bold mt-1', task.priority === 'high' ? 'text-panic' : 'text-planning')}>
+                              {task.priority}
                             </p>
                           )}
                         </div>

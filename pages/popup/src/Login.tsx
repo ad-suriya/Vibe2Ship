@@ -33,24 +33,24 @@ export const Login: React.FC<LoginProps> = ({ isLight, onLoginSuccess, isLoading
   return (
     <div
       className={cn(
-        'min-h-screen flex items-center justify-center p-4',
-        isLight ? 'bg-white text-gray-900' : 'bg-gray-900 text-white'
+        'min-h-screen flex items-center justify-center p-4 font-sans',
+        isLight ? 'bg-paper text-ink' : 'bg-ink text-paper',
       )}
     >
       <div className="w-full max-w-sm space-y-8">
         <div className="text-center">
-          <h1 className="text-3xl font-bold">Focus Manager</h1>
-          <p className="mt-2 text-sm opacity-70">Stay focused. Get more done.</p>
+          <h1 className="font-serif italic font-black text-3xl">Task Weave</h1>
+          <p className="mt-2 text-xs uppercase tracking-widest opacity-60">Stay focused. Get more done.</p>
         </div>
 
-        <div className="space-y-4">
+        <div className="space-y-3">
           <button
             onClick={handleOpenDashboard}
             className={cn(
-              'w-full py-3 px-4 rounded-lg font-semibold transition-all',
+              'w-full py-3 px-4 font-semibold transition-all border',
               isLight
-                ? 'bg-blue-600 text-white hover:bg-blue-700'
-                : 'bg-blue-600 text-white hover:bg-blue-700'
+                ? 'bg-ink text-paper border-ink shadow-[4px_4px_0px_0px_#D14D2A] hover:bg-[#333]'
+                : 'bg-paper text-ink border-paper shadow-[4px_4px_0px_0px_#D14D2A] hover:bg-gray-200',
             )}
           >
             Login with Google
@@ -59,10 +59,8 @@ export const Login: React.FC<LoginProps> = ({ isLight, onLoginSuccess, isLoading
           <button
             onClick={handleRefreshAuth}
             className={cn(
-              'w-full py-3 px-4 rounded-lg font-semibold transition-all text-sm',
-              isLight
-                ? 'bg-gray-200 text-gray-900 hover:bg-gray-300'
-                : 'bg-gray-700 text-white hover:bg-gray-600'
+              'w-full py-3 px-4 font-semibold transition-all text-sm border',
+              isLight ? 'border-ink hover:bg-ink hover:text-paper' : 'border-paper hover:bg-paper hover:text-ink',
             )}
           >
             Already Logged In? Click Here

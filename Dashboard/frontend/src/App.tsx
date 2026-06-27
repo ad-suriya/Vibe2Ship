@@ -7,7 +7,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { LoginPage } from './LoginPage';
 import {
   Loader2, Send, Copy, Check, Timer, CalendarPlus, Play, Pause, RotateCcw,
-  Plus, CalendarDays, RefreshCw, Trash2, Download, Clock, AlertTriangle, ArrowRight,
+  Plus, CalendarDays, RefreshCw, Trash2, Download, Clock, AlertTriangle, ArrowRight, Link2, Unlink,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { api } from './api';
@@ -65,6 +65,7 @@ export default function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [authUser, setAuthUser] = useState<any>(null);
   const [authLoading, setAuthLoading] = useState(true);
+  const [authError, setAuthError] = useState('');
 
   const [messages, setMessages] = useState<ChatMessage[]>([SEED_MESSAGE]);
   const [input, setInput] = useState('');
@@ -81,6 +82,7 @@ export default function App() {
 
   const [pomoSeconds, setPomoSeconds] = useState(POMODORO_SECONDS);
   const [pomoRunning, setPomoRunning] = useState(false);
+  const [pomoSessionId, setPomoSessionId] = useState<number | null>(null);
   const [copied, setCopied] = useState(false);
   const [busy, setBusy] = useState<'' | 'schedule' | 'reschedule'>('');
 
@@ -91,11 +93,74 @@ export default function App() {
   const [habits, setHabits] = useState<Habit[]>([]);
   const [tab, setTab] = useState<'plan' | 'goals' | 'habits'>('plan');
 
+  const [calendarConnected, setCalendarConnected] = useState(false);
+  const [calendarBusy, setCalendarBusy] = useState(false);
+
   const chatEndRef = useRef<HTMLDivElement>(null);
   const guardRef = useRef(false); // prevents overlapping auto-reschedules
 
   // --- effects ---------------------------------------------------------------
   useEffect(() => {
+    // The backend's OAuth callback (/api/auth/google/callback) redirects back
+    // here with the verified ID token in a URL fragment, e.g. #credential=...
+    // A fragment (not a query param) keeps it out of server logs and isn't
+    // sent on any subsequent request.
+    const hashMatch = window.location.hash.match(/credential=([^&]+)/);
+    if (hashMatch) {
+      const credential = decodeURIComponent(hashMatch[1]);
+      try {
+        const base64Url = credential.split('.')[1];
+        const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
+        const jsonPayload = decodeURIComponent(
+          atob(base64)
+            .split('')
+            .map((c) => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2))
+            .join('')
+        );
+        const userData = JSON.parse(jsonPayload);
+        const authData = {
+          isAuthenticated: true,
+          user: {
+            id: userData.sub,
+            email: userData.email,
+            name: userData.name,
+            picture: userData.picture,
+          },
+          accessToken: credential,
+          refreshToken: credential,
+          expiresAt: Date.now() + 3600 * 1000,
+        };
+        localStorage.setItem('auth', JSON.stringify(authData));
+        window.history.replaceState(null, '', window.location.pathname + window.location.search);
+
+        fetch('/api/me', {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${credential}` },
+        }).catch((err) => console.error('Failed to persist user to backend:', err));
+
+        // The extension's dashboard-bridge content script listens for this and
+        // relays isAuthenticated/user/accessToken/refreshToken to the
+        // background script — that's the only path that carries the real
+        // token to the extension (chrome.runtime isn't reachable from this
+        // page directly without externally_connectable + an extension id).
+        window.dispatchEvent(new CustomEvent('dashboardAuthChanged', { detail: authData }));
+
+        setIsAuthenticated(true);
+        setAuthUser(userData);
+        setAuthLoading(false);
+        return;
+      } catch (err) {
+        console.error('Failed to parse credential from redirect:', err);
+      }
+    }
+
+    const params = new URLSearchParams(window.location.search);
+    const err = params.get('auth_error');
+    if (err) {
+      setAuthError(err);
+      window.history.replaceState(null, '', window.location.pathname);
+    }
+
     // Check authentication from localStorage
     const authStr = localStorage.getItem('auth');
     if (authStr) {
@@ -104,6 +169,12 @@ export default function App() {
         if (auth.isAuthenticated && auth.user) {
           setIsAuthenticated(true);
           setAuthUser(auth.user);
+
+          // Re-broadcast on every page load (not just at login time) so the
+          // extension's content script re-syncs after a reload/refresh —
+          // otherwise a stale content script from before an extension reload
+          // never hears about an auth state that already existed.
+          window.dispatchEvent(new CustomEvent('dashboardAuthChanged', { detail: auth }));
         }
       } catch (err) {
         console.error('Failed to parse auth:', err);
@@ -120,12 +191,8 @@ export default function App() {
     api.listTasks().then(setTasks).catch(() => {});
     api.listGoals().then(setGoals).catch(() => {});
     api.listHabits().then(setHabits).catch(() => {});
+    api.calendarStatus().then((s) => setCalendarConnected(s.connected)).catch(() => {});
   }, [isAuthenticated]);
-
-  const handleLoginSuccess = (user: any) => {
-    setAuthUser(user);
-    setIsAuthenticated(true);
-  };
 
   const handleLogout = () => {
     localStorage.removeItem('auth');
@@ -140,6 +207,16 @@ export default function App() {
     }, 1000);
     return () => clearInterval(id);
   }, [pomoRunning]);
+
+  // The countdown reaching zero ends the timer locally — also end the
+  // backend session so the extension's popup (which polls /api/sessions)
+  // stops showing it as active.
+  useEffect(() => {
+    if (pomoSeconds !== 0 || pomoSessionId == null) return;
+    const id = pomoSessionId;
+    setPomoSessionId(null);
+    api.patchSession(id, { end_time: new Date().toISOString() }).catch(() => {});
+  }, [pomoSeconds, pomoSessionId]);
 
   // Autonomous rescheduling: poll status, auto-replan when tasks have slipped.
   useEffect(() => {
@@ -201,6 +278,9 @@ export default function App() {
       if (data.system_trigger === 'START_POMODORO') {
         setPomoSeconds(POMODORO_SECONDS);
         setPomoRunning(true);
+        api.startSession('Pomodoro focus session', POMODORO_SECONDS / 60)
+          .then((s) => setPomoSessionId(s.id))
+          .catch(() => {});
       }
       refreshStatus();
     } catch (err: any) {
@@ -212,6 +292,21 @@ export default function App() {
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(input); }
+  };
+
+  const togglePomo = () => {
+    const next = !pomoRunning;
+    setPomoRunning(next);
+    if (pomoSessionId != null) api.patchSession(pomoSessionId, { is_paused: !next }).catch(() => {});
+  };
+
+  const resetPomo = () => {
+    setPomoRunning(false);
+    setPomoSeconds(POMODORO_SECONDS);
+    if (pomoSessionId != null) {
+      api.patchSession(pomoSessionId, { end_time: new Date().toISOString() }).catch(() => {});
+      setPomoSessionId(null);
+    }
   };
 
   const cycleStatus = async (task: Task) => {
@@ -265,6 +360,24 @@ export default function App() {
   const deleteHabit = async (id: number) => {
     await api.deleteHabit(id);
     setHabits((prev) => prev.filter((x) => x.id !== id));
+  };
+
+  const connectCalendar = () => {
+    // Calendar access is granted via the same full-page OAuth redirect as
+    // sign-in (it's requested as part of that scope) — re-running it with
+    // `prompt=consent` always returns a fresh refresh token, so this also
+    // doubles as "reconnect" if access was revoked.
+    window.location.href = '/api/auth/google/login';
+  };
+
+  const disconnectCalendar = async () => {
+    setCalendarBusy(true);
+    try {
+      await api.disconnectCalendar();
+      setCalendarConnected(false);
+    } catch (err: any) {
+      setError(err.message || 'Could not disconnect Google Calendar.');
+    } finally { setCalendarBusy(false); }
   };
 
   const planDay = async () => {
@@ -332,7 +445,7 @@ export default function App() {
   }
 
   if (!isAuthenticated) {
-    return <LoginPage onLoginSuccess={handleLoginSuccess} />;
+    return <LoginPage authError={authError} />;
   }
 
   return (
@@ -341,12 +454,21 @@ export default function App() {
       <header className="flex flex-col md:flex-row justify-between md:items-baseline border-b border-[#1A1A1A] pb-5 mb-6 gap-3">
         <div className="flex flex-col">
           <span className="font-sans text-[10px] uppercase tracking-widest font-bold opacity-60 mb-1">
-            The Last-Minute Life Saver / Live Session
+            Task Weave / Live Session
           </span>
           <h1 className="text-3xl md:text-4xl font-black italic tracking-tight leading-none">Anxiety, into Action.</h1>
         </div>
         <div className="flex items-center gap-3 md:justify-end flex-wrap">
           <RemindersBell />
+          <button
+            onClick={calendarConnected ? disconnectCalendar : connectCalendar}
+            disabled={calendarBusy}
+            title={calendarConnected ? 'Disconnect Google Calendar' : 'Sync your schedule with Google Calendar'}
+            className="font-sans text-[10px] uppercase tracking-widest font-bold px-3 py-1 border border-[#1A1A1A] hover:bg-[#1A1A1A] hover:text-white transition-colors flex items-center gap-1 disabled:opacity-40"
+          >
+            {calendarBusy ? <Loader2 className="w-3 h-3 animate-spin" /> : calendarConnected ? <Unlink className="w-3 h-3" /> : <Link2 className="w-3 h-3" />}
+            {calendarConnected ? 'Calendar Synced' : 'Sync Google Calendar'}
+          </button>
           {authUser && (
             <div className="font-sans text-[10px] opacity-70">
               {authUser.name}
@@ -464,10 +586,10 @@ export default function App() {
                   </div>
                 </div>
                 <div className="flex gap-2">
-                  <button onClick={() => setPomoRunning((r) => !r)} className="p-3 border border-white/40 hover:bg-white hover:text-[#1A1A1A] transition-colors" aria-label={pomoRunning ? 'Pause' : 'Play'}>
+                  <button onClick={togglePomo} className="p-3 border border-white/40 hover:bg-white hover:text-[#1A1A1A] transition-colors" aria-label={pomoRunning ? 'Pause' : 'Play'}>
                     {pomoRunning ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
                   </button>
-                  <button onClick={() => { setPomoRunning(false); setPomoSeconds(POMODORO_SECONDS); }} className="p-3 border border-white/40 hover:bg-white hover:text-[#1A1A1A] transition-colors" aria-label="Reset">
+                  <button onClick={resetPomo} className="p-3 border border-white/40 hover:bg-white hover:text-[#1A1A1A] transition-colors" aria-label="Reset">
                     <RotateCcw className="w-4 h-4" />
                   </button>
                 </div>

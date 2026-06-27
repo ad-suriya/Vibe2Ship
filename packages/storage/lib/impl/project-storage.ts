@@ -1,56 +1,26 @@
-import { createStorage, StorageEnum } from '../base/index.js';
+import { request, mapApiProject } from './backend-client.js';
+import type { ApiProject } from './backend-client.js';
 import type { Project, ProjectCreateInput, ProjectUpdatePayload } from '@extension/types';
 
-interface ProjectsStorageState {
-  projects: Project[];
-}
-
-const storage = createStorage<ProjectsStorageState>(
-  'projects-storage-key',
-  {
-    projects: [],
-  },
-  {
-    storageEnum: StorageEnum.Local,
-    liveUpdate: true,
-  },
-);
-
 export const projectsStorage = {
-  ...storage,
-  addProject: async (input: ProjectCreateInput) => {
-    const newProject: Project = {
-      ...input,
-      id: Date.now().toString(),
-      createdAt: Date.now(),
-      lastModified: Date.now(),
-    };
-
-    await storage.set(currentState => ({
-      ...currentState,
-      projects: [...currentState.projects, newProject],
-    }));
-
-    return newProject;
+  addProject: async (input: ProjectCreateInput): Promise<Project> => {
+    const created = await request<ApiProject>('/projects', {
+      method: 'POST',
+      body: JSON.stringify({ name: input.name, color: input.color }),
+    });
+    return mapApiProject(created);
   },
-  getProjects: async () => {
-    const state = await storage.get();
-    return state.projects;
+  getProjects: async (): Promise<Project[]> => {
+    const projects = await request<ApiProject[]>('/projects');
+    return projects.map(mapApiProject);
   },
-  updateProject: async (id: string, updates: ProjectUpdatePayload) => {
-    await storage.set(currentState => ({
-      ...currentState,
-      projects: currentState.projects.map(project =>
-        project.id === id
-          ? { ...project, ...updates, lastModified: Date.now() }
-          : project,
-      ),
-    }));
+  updateProject: async (id: string, updates: ProjectUpdatePayload): Promise<void> => {
+    await request<ApiProject>(`/projects/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ name: updates.name, color: updates.color }),
+    });
   },
-  deleteProject: async (id: string) => {
-    await storage.set(currentState => ({
-      ...currentState,
-      projects: currentState.projects.filter(project => project.id !== id),
-    }));
+  deleteProject: async (id: string): Promise<void> => {
+    await request<{ deleted: number }>(`/projects/${id}`, { method: 'DELETE' });
   },
 };
