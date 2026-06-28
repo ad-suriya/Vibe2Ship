@@ -144,6 +144,23 @@ function Popup() {
     }
   };
 
+  // Picking a task to focus on, instead of always typing a free-text
+  // description: starts the same timer + site-blocking flow as the
+  // description box's Start button, but pinned to that exact task — and
+  // marks it in-progress so the dashboard's Execution Panel picks it up too.
+  const handleFocusTask = async (task: Task) => {
+    try {
+      const newSession = await focusSessionStorage.startTracking({ description: task.title });
+      setSession(newSession);
+      setDescription(task.title);
+      await blockingStorage.enable(blockedSites);
+      await tasksStorage.update(task.id, { status: 'in-progress' });
+      await refreshTasks();
+    } catch (err) {
+      console.error('Failed to start focus on task:', err);
+    }
+  };
+
   const openDashboard = () => {
     chrome.tabs.create({ url: FRONTEND_URL });
   };
@@ -277,15 +294,30 @@ function Popup() {
               >
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-medium truncate">{task.title}</p>
-                  {task.priority !== 'medium' && (
-                    <p className={cn('text-[10px] uppercase tracking-widest font-bold mt-0.5', task.priority === 'high' ? 'text-panic' : 'text-planning')}>
-                      {task.priority}
-                    </p>
-                  )}
+                  <div className="flex items-center gap-2 mt-0.5">
+                    {task.priority !== 'medium' && (
+                      <p className={cn('text-[10px] uppercase tracking-widest font-bold', task.priority === 'high' ? 'text-panic' : 'text-planning')}>
+                        {task.priority}
+                      </p>
+                    )}
+                    {task.status === 'in-progress' && (
+                      <p className="text-[10px] uppercase tracking-widest font-bold text-panic">focusing</p>
+                    )}
+                  </div>
                 </div>
-                <button onClick={() => handleCompleteTask(task.id)} className="text-sm hover:opacity-70" title="Mark done">
-                  ✓
-                </button>
+                <div className="flex items-center gap-1 shrink-0">
+                  <button
+                    onClick={() => handleFocusTask(task)}
+                    disabled={!!session?.isActive}
+                    title={session?.isActive ? 'Stop the current session first' : 'Focus on this task'}
+                    className="text-sm hover:opacity-70 disabled:opacity-30 disabled:hover:opacity-30"
+                  >
+                    🎯
+                  </button>
+                  <button onClick={() => handleCompleteTask(task.id)} className="text-sm hover:opacity-70" title="Mark done">
+                    ✓
+                  </button>
+                </div>
               </div>
             ))
           )}
