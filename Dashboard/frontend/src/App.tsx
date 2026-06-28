@@ -199,6 +199,12 @@ export default function App() {
 
   const handleLogout = () => {
     localStorage.removeItem('auth');
+    // Mirror the login path: the extension's dashboard-bridge content script
+    // listens for this on the dashboard tab and relays it to the background
+    // script, which clears the extension's own auth state too.
+    window.dispatchEvent(new CustomEvent('dashboardAuthChanged', {
+      detail: { isAuthenticated: false, user: null, accessToken: '', refreshToken: '' },
+    }));
     setIsAuthenticated(false);
     setAuthUser(null);
   };
