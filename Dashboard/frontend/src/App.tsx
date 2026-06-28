@@ -8,7 +8,7 @@ import { LoginPage } from './LoginPage';
 import {
   Loader2, Send, Copy, Check, Timer, CalendarPlus, Play, Pause, RotateCcw,
   Plus, CalendarDays, RefreshCw, Trash2, Download, Clock, AlertTriangle, ArrowRight, Link2, Unlink,
-  MessageCircle, X, HelpCircle,
+  MessageCircle, X, HelpCircle, Crosshair,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { api } from './api';
@@ -585,8 +585,16 @@ export default function App() {
   };
 
   const startFocusOnTask = async (task: Task) => {
+    // Only one task is ever "the" active one — choosing a different task to
+    // focus on demotes whatever was previously in progress back to To Do,
+    // so the Execution Panel always shows exactly the task just picked.
+    if (inProgressTask && inProgressTask.id !== task.id) {
+      const reverted = await api.patchTask(inProgressTask.id, { status: 'TODO' });
+      setTasks((prev) => prev.map((t) => (t.id === inProgressTask.id ? reverted : t)));
+    }
     const updated = await api.patchTask(task.id, { status: 'IN_PROGRESS' });
     setTasks((prev) => prev.map((t) => (t.id === task.id ? updated : t)));
+    setTab('plan');
     setPomoSeconds(POMODORO_SECONDS);
     setPomoRunning(true);
     api.startSession(task.task_name, POMODORO_SECONDS / 60).then((s) => setPomoSessionId(s.id)).catch(() => {});
@@ -734,7 +742,9 @@ export default function App() {
 
           {/* System triggers */}
           <AnimatePresence>
-            {(trigger === 'START_POMODORO' || pomoSessionId != null) && (
+            {/* Suppressed when the Execution Panel above is already showing this
+                exact timer for the active task — otherwise it's a duplicate. */}
+            {(trigger === 'START_POMODORO' || pomoSessionId != null) && executionTask?.status !== 'IN_PROGRESS' && (
               <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }}
                 className="bg-[#1A1A1A] text-white p-5 flex items-center justify-between shadow-[5px_5px_0px_0px_#D14D2A]">
                 <div className="flex items-center gap-4">
@@ -941,6 +951,14 @@ export default function App() {
                         <button onClick={() => cycleStatus(task)} className="font-sans text-[10px] uppercase font-bold tracking-widest px-2 py-1 border border-[#1A1A1A] hover:bg-[#1A1A1A] hover:text-white transition-colors">
                           {task.status === 'TODO' ? 'Start' : task.status === 'IN_PROGRESS' ? 'Done' : 'Reopen'}
                         </button>
+                        {!done && (
+                          <button onClick={() => startFocusOnTask(task)}
+                            title={task.status === 'IN_PROGRESS' ? 'Already the active focus task' : 'Focus on this task now'}
+                            disabled={task.status === 'IN_PROGRESS'}
+                            className="font-sans text-[10px] uppercase font-bold tracking-widest px-2 py-1 border border-[#D14D2A] text-[#D14D2A] hover:bg-[#D14D2A] hover:text-white transition-colors disabled:opacity-40 flex items-center gap-1">
+                            <Crosshair className="w-3 h-3" /> Focus
+                          </button>
+                        )}
                         <a href={api.taskIcsUrl(task.id)} title="Download .ics" className="p-1 border border-[#1A1A1A]/30 hover:border-[#2A6B5E] hover:text-[#2A6B5E] transition-colors"><Download className="w-3.5 h-3.5" /></a>
                         <a href={gcalUrl(task)} target="_blank" rel="noreferrer" title="Add to Google Calendar" className="p-1 border border-[#1A1A1A]/30 hover:border-[#2A6B5E] hover:text-[#2A6B5E] transition-colors"><CalendarPlus className="w-3.5 h-3.5" /></a>
                         <button onClick={() => removeTask(task.id)} title="Delete" className="p-1 border border-[#1A1A1A]/30 hover:border-[#D14D2A] hover:text-[#D14D2A] transition-colors ml-auto"><Trash2 className="w-3.5 h-3.5" /></button>
