@@ -1,6 +1,13 @@
 import { authStorage } from './auth-storage.js';
 
-export const API_BASE = 'http://localhost:8000/api';
+// process.env.CEB_NODE_ENV is inlined at build time (see @extension/env) —
+// dev builds (CEB_DEV=true in the root .env) hit the local backend, anything
+// else falls back to the deployed Cloud Run service so an unpacked extension
+// works out of the box without a local backend running.
+export const API_BASE =
+  process.env.CEB_NODE_ENV === 'development'
+    ? 'http://localhost:8000/api'
+    : 'https://task-weave-backend-684807093732.asia-south1.run.app/api';
 
 export async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const auth = await authStorage.get();

@@ -51,6 +51,10 @@ _frontend_origins = {"http://localhost:5173", "http://127.0.0.1:5173", auth.FRON
 app.add_middleware(
     CORSMiddleware,
     allow_origins=list(_frontend_origins),
+    # The Chrome extension's popup/options pages run on a chrome-extension://
+    # origin whose id varies per install (different on every unpacked load) —
+    # an explicit allowlist entry isn't possible, so allow the scheme instead.
+    allow_origin_regex=r"^chrome-extension://.*",
     allow_methods=["*"],
     allow_headers=["*"],
 )
