@@ -20,7 +20,19 @@ from google.genai import types
 load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
 API_KEY = os.environ.get("GEMINI_API_KEY")
+PROJECT_ID = os.environ.get("GOOGLE_CLOUD_PROJECT") or os.environ.get("GCP_PROJECT")
+LOCATION = os.environ.get("GOOGLE_CLOUD_LOCATION", "global")
 MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.5-flash")
+
+# Vertex AI (Application Default Credentials) is preferred over the Gemini
+# Developer API (API key): the org's security policy disallows API keys
+# outright, and Vertex AI isn't capped by the Developer API's free-tier
+# limit of 20 requests/day per model — it bills normally through the GCP
+# project instead. Falls back to an API key only if no project is
+# configured (e.g. local dev without `gcloud auth application-default
+# login`). Note: the regional host (e.g. us-central1-aiplatform...) 404s
+# for publisher models here — only the global host + location work.
+USE_VERTEX = bool(PROJECT_ID)
 
 BASE_SYSTEM = """\
 You are the intelligence engine for "Task Weave," a proactive \
@@ -127,15 +139,19 @@ _client: Optional[genai.Client] = None
 
 
 def configured() -> bool:
-    return bool(API_KEY)
+    return USE_VERTEX or bool(API_KEY)
 
 
 def _get_client() -> genai.Client:
     global _client
     if _client is None:
-        if not API_KEY:
-            raise RuntimeError("GEMINI_API_KEY not configured. Set it in the repo-root .env.")
-        _client = genai.Client(api_key=API_KEY)
+        if USE_VERTEX:
+            _client = genai.Client(vertexai=True, project=PROJECT_ID, location=LOCATION)
+        elif API_KEY:
+            _client = genai.Client(api_key=API_KEY)
+        else:
+            raise RuntimeError(
+                "Neither GOOGLE_CLOUD_PROJECT (Vertex AI/ADC) nor GEMINI_API_KEY is configured.")
     return _client
 
 
