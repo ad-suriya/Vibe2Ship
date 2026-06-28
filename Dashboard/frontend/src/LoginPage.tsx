@@ -72,6 +72,16 @@ export const LoginPage: React.FC<LoginPageProps> = ({ authError }) => {
           </div>
         </div>
 
+        {/* Extension callout */}
+        <div className="text-center">
+          <a
+            href="/judges.html"
+            className="inline-flex items-center gap-2 text-sm font-bold underline text-[#2A6B5E] hover:text-[#1A1A1A] transition-colors"
+          >
+            🧩 Try our Chrome extension — install &amp; testing guide
+          </a>
+        </div>
+
         {/* Footer */}
         <p className="text-center text-xs opacity-50">
           By signing in, you agree to our Terms of Service and Privacy Policy
