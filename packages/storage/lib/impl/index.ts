@@ -4,3 +4,5 @@ export * from './tasks-storage.js';
 export * from './auth-storage.js';
 export * from './project-storage.js';
 export * from './backend-client.js';
+export * from './blocking-storage.js';
+export * from './blocked-sites-storage.js';

@@ -177,6 +177,11 @@ def find_active_by_name(name: str, user_id: str) -> Optional[dict]:
     return max(matches, key=lambda t: t["id"]) if matches else None
 
 
+def find_by_calendar_event(event_id: str, user_id: str) -> Optional[dict]:
+    matches = [t for t in _all("tasks", user_id) if t.get("calendar_event_id") == event_id]
+    return matches[0] if matches else None
+
+
 def upsert_from_engine(task: dict, user_id: str) -> dict:
     existing = find_active_by_name(task["task_name"], user_id)
     if existing:

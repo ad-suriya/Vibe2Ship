@@ -166,9 +166,19 @@ def _generate(contents, system_instruction, schema, max_attempts: int = 4):
     raise last_err
 
 
-def chat(message: str, history: list[dict], now: Optional[datetime] = None) -> EngineResponse:
+def chat(message: str, history: list[dict], now: Optional[datetime] = None,
+         busy: Optional[list[tuple[datetime, datetime]]] = None) -> EngineResponse:
     now = now or datetime.now()
     system = f"{BASE_SYSTEM}\n\nCurrent datetime (local): {now.replace(microsecond=0).isoformat()}"
+    if busy:
+        windows = "; ".join(f"{s.replace(microsecond=0).isoformat()} to {e.replace(microsecond=0).isoformat()}"
+                             for s, e in busy[:20])
+        system += (
+            f"\n\nThe user's Google Calendar already has these busy windows: {windows}. "
+            "When inferring a deadline or implying a time commitment, be aware a task can't "
+            "realistically be scheduled inside these windows — factor that into urgency/estimates "
+            "and mention the conflict in agent_message if it's relevant."
+        )
 
     contents = []
     for turn in history:

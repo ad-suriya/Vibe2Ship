@@ -200,6 +200,38 @@ def _calendar_busy_window(user_id: str, now: datetime) -> list[tuple[datetime, d
     return calendar_sync.list_busy(token, now, now + timedelta(days=14))
 
 
+def _import_calendar_events(user_id: str, now: datetime) -> int:
+    """Pull real Google Calendar events (next 2 weeks) in as tasks.
+
+    Events we pushed ourselves are filtered out by calendar_sync.list_events
+    (tagged on push); this only picks up things the user put on their
+    calendar directly, so the plan reflects commitments made outside the app.
+    """
+    token = _calendar_access_token(user_id)
+    if not token:
+        return 0
+    events = calendar_sync.list_events(token, now, now + timedelta(days=14))
+    imported = 0
+    for event in events:
+        if db.find_by_calendar_event(event["id"], user_id):
+            continue
+        try:
+            minutes = max(15, int(
+                (datetime.fromisoformat(event["end"]) - datetime.fromisoformat(event["start"])).total_seconds() // 60))
+        except ValueError:
+            minutes = 30
+        created = db.create_task(
+            user_id,
+            task_name=event["summary"],
+            estimated_minutes=minutes,
+            next_micro_step=event["description"][:200],
+        )
+        db.update_task(created["id"], user_id, calendar_event_id=event["id"])
+        db.set_schedule(created["id"], user_id, event["start"], event["end"])
+        imported += 1
+    return imported
+
+
 # --- Health -------------------------------------------------------------------
 @app.get("/api/health")
 def health() -> dict:
@@ -265,6 +297,7 @@ def google_callback(request: Request, code: str = "", state: str = "", error: st
     if refresh_token:
         expires_at = time.time() + tokens.get("expires_in", 3600)
         db.save_calendar_account(claims["sub"], refresh_token, tokens["access_token"], expires_at)
+        _import_calendar_events(claims["sub"], datetime.now())
         _sync_schedule_to_calendar(claims["sub"], db.list_tasks(claims["sub"]))
 
     resp = RedirectResponse(f"{auth.FRONTEND_ORIGIN}/#credential={tokens['id_token']}")
@@ -280,8 +313,10 @@ def chat(req: ChatRequest, user: dict = Depends(get_current_user)) -> ChatRespon
     if not engine.configured():
         raise HTTPException(status_code=500, detail="GEMINI_API_KEY not configured.")
 
+    now = datetime.now()
+    busy = _calendar_busy_window(user["id"], now)
     try:
-        result = engine.chat(req.message, [t.model_dump() for t in req.history])
+        result = engine.chat(req.message, [t.model_dump() for t in req.history], now=now, busy=busy)
     except Exception as err:  # noqa: BLE001
         if engine.is_transient(err):
             raise HTTPException(status_code=503, detail="The AI model is busy. Try again in a moment.")
@@ -429,6 +464,19 @@ def calendar_status(user: dict = Depends(get_current_user)) -> dict:
 def calendar_disconnect(user: dict = Depends(get_current_user)) -> dict:
     db.delete_calendar_account(user["id"])
     return {"connected": False}
+
+
+@app.post("/api/calendar/sync")
+def calendar_sync_now(user: dict = Depends(get_current_user)) -> dict:
+    """Two-way sync: pull events the user added on Google Calendar in as
+    tasks, then push every scheduled task back out. Called on a timer from
+    the frontend so it stays in sync without the user pressing a button."""
+    now = datetime.now()
+    imported = _import_calendar_events(user["id"], now)
+    tasks = db.list_tasks(user["id"])
+    _sync_schedule_to_calendar(user["id"], tasks)
+    tasks = db.list_tasks(user["id"])
+    return {"tasks": tasks, "imported": imported}
 
 
 # --- Calendar (.ics) ----------------------------------------------------------

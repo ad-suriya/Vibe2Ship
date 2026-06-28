@@ -1,11 +1,10 @@
-export interface BlockingState {
-  isActive: boolean;
-  blockedSites: string[];
-}
+import { blockingStorage } from '@extension/storage';
+import type { BlockingState } from '@extension/storage';
 
 let blockingState: BlockingState = {
   isActive: false,
   blockedSites: [],
+  overrideUntil: {},
 };
 
 const normalizeUrl = (url: string): string => {
@@ -21,6 +20,8 @@ const isSiteBlocked = (url: string): boolean => {
   if (!blockingState.isActive) return false;
 
   const normalized = normalizeUrl(url);
+  const overrideExpiry = blockingState.overrideUntil[normalized];
+  if (overrideExpiry && overrideExpiry > Date.now()) return false;
 
   return blockingState.blockedSites.some(site => {
     const normalizedSite = site.replace(/^www\./, '');
@@ -38,31 +39,20 @@ const handleNavigation = (url: string): void => {
 };
 
 export const setupFocusBlocking = (): void => {
-  chrome.runtime.onMessage.addListener((message: unknown, sender, sendResponse) => {
-    const msg = message as { type?: string; payload?: unknown };
-
-    if (msg.type === 'BLOCKING_ENABLED') {
-      const payload = msg.payload as { sites?: string[]; isActive?: boolean };
-      blockingState = {
-        isActive: payload.isActive ?? true,
-        blockedSites: payload.sites ?? [],
-      };
-      console.log('[CEB] Blocking enabled for:', blockingState.blockedSites);
-      sendResponse({ success: true });
-      return;
+  // The persisted blocking-storage is the source of truth (it survives a
+  // fresh page load, unlike a one-off runtime message), so a tab opened
+  // straight to a blocked site during an active focus session is caught
+  // immediately, not just on subsequent in-page link clicks.
+  blockingStorage.get().then(state => {
+    blockingState = state;
+    handleNavigation(window.location.href);
+  });
+  blockingStorage.subscribe(() => {
+    const next = blockingStorage.getSnapshot();
+    if (next) {
+      blockingState = next;
+      handleNavigation(window.location.href);
     }
-
-    if (msg.type === 'BLOCKING_DISABLED') {
-      blockingState = {
-        isActive: false,
-        blockedSites: [],
-      };
-      console.log('[CEB] Blocking disabled');
-      sendResponse({ success: true });
-      return;
-    }
-
-    sendResponse(undefined);
   });
 
   const handleBeforeUnload = (event: BeforeUnloadEvent): void => {

@@ -44,11 +44,11 @@ export const FocusBlocker: React.FC<FocusBlockerProps> = ({
 
         <div>
           <h1 className="text-3xl font-bold text-gray-900 dark:text-white">
-            Stay Focused
+            You started a focus session. Finish first.
           </h1>
           <p className="mt-2 text-gray-600 dark:text-gray-400">
             <span className="font-semibold text-lg">{getDomainFromUrl(blockedUrl)}</span> is
-            blocked during focus mode
+            blocked until your session ends.
           </p>
         </div>
 

@@ -1,7 +1,7 @@
 import '@src/Popup.css';
 import { useEffect, useState } from 'react';
 import { useStorage, withErrorBoundary, withSuspense } from '@extension/shared';
-import { exampleThemeStorage, authStorage, focusSessionStorage, tasksStorage } from '@extension/storage';
+import { exampleThemeStorage, authStorage, focusSessionStorage, tasksStorage, blockingStorage, blockedSitesStorage } from '@extension/storage';
 import { cn, LoadingSpinner, TimeTracker } from '@extension/ui';
 import { Login } from './Login';
 import type { FocusSession, Task } from '@extension/types';
@@ -9,6 +9,7 @@ import type { FocusSession, Task } from '@extension/types';
 function Popup() {
   const { isLight } = useStorage(exampleThemeStorage);
   const { isAuthenticated } = useStorage(authStorage);
+  const blockedSites = useStorage(blockedSitesStorage);
   const [session, setSession] = useState<FocusSession | null>(null);
   const [description, setDescription] = useState('');
   const [todayTotal, setTodayTotal] = useState(0);
@@ -16,6 +17,8 @@ function Popup() {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [newTaskTitle, setNewTaskTitle] = useState('');
   const [taskError, setTaskError] = useState<string | null>(null);
+  const [newSite, setNewSite] = useState('');
+  const [showBlocklist, setShowBlocklist] = useState(false);
 
   // authStorage is updated live by the background script when the dashboard
   // bridge relays a login. Once that lands, enrich the user with backend data.
@@ -153,14 +156,29 @@ function Popup() {
     try {
       const newSession = await focusSessionStorage.startTracking({ description });
       setSession(newSession);
+      await blockingStorage.enable(blockedSites);
     } catch (err) {
       console.error('Failed to start tracking:', err);
     }
   };
 
+  const handleAddSite = async () => {
+    const site = newSite.trim();
+    if (!site) return;
+    const next = await blockedSitesStorage.add(site);
+    setNewSite('');
+    await blockingStorage.updateSites(next);
+  };
+
+  const handleRemoveSite = async (site: string) => {
+    const next = await blockedSitesStorage.remove(site);
+    await blockingStorage.updateSites(next);
+  };
+
   const handleStop = async () => {
     try {
       await focusSessionStorage.stopTracking();
+      await blockingStorage.disable();
       setSession(null);
       setDescription('');
 
@@ -272,6 +290,72 @@ function Popup() {
             ))
           )}
         </div>
+      </div>
+
+      {/* Blocked Sites */}
+      <div className={cn('border-t pt-3 flex flex-col gap-2', isLight ? 'border-ink/15' : 'border-paper/20')}>
+        <button
+          onClick={() => setShowBlocklist(s => !s)}
+          className="flex items-center justify-between text-[10px] uppercase tracking-widest font-bold opacity-60"
+        >
+          <span>Blocked Sites During Focus ({blockedSites.length})</span>
+          <span>{showBlocklist ? '▲' : '▼'}</span>
+        </button>
+
+        {showBlocklist && (
+          <>
+            <div className="flex gap-2">
+              <input
+                type="text"
+                placeholder="e.g. tiktok.com"
+                value={newSite}
+                onChange={e => setNewSite(e.target.value)}
+                onKeyDown={e => {
+                  if (e.key === 'Enter') handleAddSite();
+                }}
+                className={cn(
+                  'flex-1 px-3 py-2 border text-sm focus:outline-none',
+                  isLight
+                    ? 'bg-white border-ink/30 text-ink focus:border-ink'
+                    : 'bg-ink border-paper/30 text-paper focus:border-paper',
+                )}
+              />
+              <button
+                onClick={handleAddSite}
+                className={cn(
+                  'px-3 py-2 text-[10px] uppercase tracking-widest font-bold border',
+                  isLight ? 'bg-ink text-paper border-ink hover:bg-[#333]' : 'bg-paper text-ink border-paper hover:bg-gray-200',
+                )}
+              >
+                Add
+              </button>
+            </div>
+
+            <div className="flex flex-wrap gap-2 max-h-32 overflow-y-auto">
+              {blockedSites.length === 0 ? (
+                <p className="text-xs opacity-50 py-2">No sites blocked — focus sessions won't restrict anything.</p>
+              ) : (
+                blockedSites.map(site => (
+                  <span
+                    key={site}
+                    className={cn(
+                      'flex items-center gap-1.5 px-2 py-1 text-xs border',
+                      isLight ? 'border-ink/20' : 'border-paper/20',
+                    )}
+                  >
+                    {site}
+                    <button onClick={() => handleRemoveSite(site)} className="hover:text-panic" aria-label={`Remove ${site}`}>
+                      ✕
+                    </button>
+                  </span>
+                ))
+              )}
+            </div>
+            {session && (
+              <p className="text-[10px] opacity-50 italic">Changes apply immediately to this session.</p>
+            )}
+          </>
+        )}
       </div>
 
       {/* Footer Actions */}

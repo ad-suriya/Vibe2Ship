@@ -127,4 +127,6 @@ export const api = {
   calendarStatus: () => fetch('/api/calendar/status', { headers: authHeaders() }).then(handle<{ connected: boolean }>),
   disconnectCalendar: () =>
     fetch('/api/calendar/disconnect', { method: 'POST', headers: authHeaders() }).then(handle<{ connected: boolean }>),
+  calendarSync: () =>
+    fetch('/api/calendar/sync', { method: 'POST', headers: authHeaders() }).then(handle<{ tasks: Task[]; imported: number }>),
 };

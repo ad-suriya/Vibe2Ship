@@ -35,6 +35,19 @@ function TaskCaptureContent() {
 
   useEffect(() => {
     const getPageContext = async () => {
+      // Opened ambiently (context menu / keyboard shortcut) — the page context
+      // travels in the URL since this capture window isn't the source tab.
+      const params = new URLSearchParams(window.location.search);
+      if (params.has('url') || params.has('title')) {
+        const title = params.get('title') || '';
+        const url = params.get('url') || undefined;
+        const selectedText = params.get('selectedText') || undefined;
+        setContext({ title, url, selectedText });
+        if (title) setTaskName(title);
+        if (selectedText) setDescription(selectedText);
+        return;
+      }
+
       try {
         const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
 

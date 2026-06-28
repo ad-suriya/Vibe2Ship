@@ -24,6 +24,11 @@ TOKEN_URI = "https://oauth2.googleapis.com/token"
 EVENTS_URI = "https://www.googleapis.com/calendar/v3/calendars/primary/events"
 FREEBUSY_URI = "https://www.googleapis.com/calendar/v3/freeBusy"
 
+# Tag every event we push so an import pass can tell "a task we scheduled"
+# apart from "something the user put on their calendar themselves" — only
+# the latter should ever be pulled in as a new task.
+SOURCE_TAG = "task-weave"
+
 
 def configured() -> bool:
     return bool(CLIENT_SECRET)
@@ -82,6 +87,7 @@ def push_event(access_token: str, task: dict) -> Optional[str]:
         "description": task.get("next_micro_step") or "",
         "start": {"dateTime": start},
         "end": {"dateTime": end},
+        "extendedProperties": {"private": {"source": SOURCE_TAG}},
     }
     headers = {"Authorization": f"Bearer {access_token}"}
     event_id = task.get("calendar_event_id")
@@ -107,6 +113,49 @@ def delete_event(access_token: str, event_id: str) -> None:
         requests.delete(f"{EVENTS_URI}/{event_id}", headers={"Authorization": f"Bearer {access_token}"}, timeout=10)
     except requests.RequestException:
         pass
+
+
+def list_events(access_token: str, time_min: datetime, time_max: datetime) -> list[dict]:
+    """Read real Google Calendar events (not just busy windows) for import.
+
+    Skips events we created ourselves (tagged with SOURCE_TAG on push) — those
+    are already represented by their own task via calendar_event_id, so
+    re-importing them would just create a duplicate.
+    """
+    headers = {"Authorization": f"Bearer {access_token}"}
+    params = {
+        "timeMin": time_min.isoformat(),
+        "timeMax": time_max.isoformat(),
+        "singleEvents": "true",
+        "orderBy": "startTime",
+        "maxResults": 100,
+    }
+    try:
+        resp = requests.get(EVENTS_URI, params=params, headers=headers, timeout=10)
+        resp.raise_for_status()
+        items = resp.json().get("items", [])
+    except requests.RequestException:
+        return []
+
+    out = []
+    for item in items:
+        if item.get("status") == "cancelled":
+            continue
+        source = item.get("extendedProperties", {}).get("private", {}).get("source")
+        if source == SOURCE_TAG:
+            continue
+        start = item.get("start", {}).get("dateTime") or item.get("start", {}).get("date")
+        end = item.get("end", {}).get("dateTime") or item.get("end", {}).get("date")
+        if not start or not end:
+            continue
+        out.append({
+            "id": item["id"],
+            "summary": item.get("summary") or "Untitled event",
+            "description": item.get("description") or "",
+            "start": start,
+            "end": end,
+        })
+    return out
 
 
 def list_busy(access_token: str, time_min: datetime, time_max: datetime) -> list[tuple[datetime, datetime]]:

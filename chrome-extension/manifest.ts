@@ -31,7 +31,7 @@ const manifest = {
   version: packageJson.version,
   description: '__MSG_extensionDescription__',
   host_permissions: ['<all_urls>'],
-  permissions: ['storage', 'scripting', 'tabs', 'notifications'],
+  permissions: ['storage', 'scripting', 'tabs', 'notifications', 'contextMenus'],
   background: {
     service_worker: 'background.js',
     type: 'module',
@@ -39,6 +39,12 @@ const manifest = {
   action: {
     default_popup: 'popup/index.html',
     default_icon: 'icon-34.png',
+  },
+  commands: {
+    'capture-task': {
+      suggested_key: { default: 'Ctrl+Shift+Y', mac: 'Command+Shift+Y' },
+      description: 'Capture the current page (or selection) as a task',
+    },
   },
   icons: {
     '128': 'icon-128.png',
@@ -51,6 +57,7 @@ const manifest = {
     {
       matches: ['http://*/*', 'https://*/*', '<all_urls>'],
       css: ['content.css'],
+      js: ['content/all.iife.js'],
     },
   ],
   web_accessible_resources: [

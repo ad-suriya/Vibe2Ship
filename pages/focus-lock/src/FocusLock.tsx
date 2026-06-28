@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { FocusBlocker } from '@extension/ui';
-import { focusSessionStorage } from '@extension/storage';
+import { focusSessionStorage, blockingStorage } from '@extension/storage';
 import type { FocusSession } from '@extension/types';
 
 const FocusLock: React.FC = () => {
@@ -44,7 +44,12 @@ const FocusLock: React.FC = () => {
     return () => clearInterval(interval);
   }, [session]);
 
-  const handleOverride = () => {
+  const handleOverride = async () => {
+    try {
+      await blockingStorage.overrideOnce(new URL(blockedUrl).hostname.replace(/^www\./, ''));
+    } catch {
+      /* malformed URL — fall through and let it redirect again if so */
+    }
     chrome.tabs.query({ active: true, currentWindow: true }, tabs => {
       if (tabs[0]?.id) {
         chrome.tabs.update(tabs[0].id, { url: blockedUrl });

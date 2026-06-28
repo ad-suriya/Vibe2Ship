@@ -17,6 +17,8 @@ import {
 import RemindersBell from './components/RemindersBell';
 import GoalsPanel from './components/GoalsPanel';
 import HabitsPanel from './components/HabitsPanel';
+import ExecutionPanel from './components/ExecutionPanel';
+import PanicPanel from './components/PanicPanel';
 
 const MODE_META: Record<Mode, { label: string; color: string; blurb: string }> = {
   PLANNING_MODE: { label: 'Planning', color: '#2A6B5E', blurb: 'Deadline is days out — be strategic.' },
@@ -25,6 +27,7 @@ const MODE_META: Record<Mode, { label: string; color: string; blurb: string }> =
   REVIEW_MODE: { label: 'Review', color: '#6B5BD1', blurb: 'Reflecting on what is done.' },
 };
 const URGENCY_COLOR: Record<Urgency, string> = { HIGH: '#D14D2A', MEDIUM: '#1A1A1A', LOW: '#6B7280' };
+const URGENCY_RANK: Record<Urgency, number> = { HIGH: 0, MEDIUM: 1, LOW: 2 };
 const STATUS_LABEL: Record<Status, string> = { TODO: 'To Do', IN_PROGRESS: 'In Progress', COMPLETED: 'Completed' };
 const ACTION_LABEL: Record<string, string> = {
   DRAFT_EMAIL: 'Drafted Email', CREATE_OUTLINE: 'Generated Outline',
@@ -243,6 +246,31 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loading]);
 
+  // Auto-sync with Google Calendar: pulls in events the user added directly
+  // on their calendar (as tasks) and pushes the current plan back out, on a
+  // timer — no "Sync" button press required once Calendar is connected.
+  const calendarSyncGuardRef = useRef(false);
+  useEffect(() => {
+    if (!calendarConnected) return;
+    const syncNow = async () => {
+      if (calendarSyncGuardRef.current) return;
+      calendarSyncGuardRef.current = true;
+      try {
+        const r = await api.calendarSync();
+        setTasks(r.tasks);
+        if (r.imported > 0) {
+          pushSystem(`Pulled ${r.imported} event${r.imported === 1 ? '' : 's'} from your Google Calendar.`);
+        }
+        refreshStatus();
+      } catch { /* offline / token revoked — try again next tick */ }
+      finally { calendarSyncGuardRef.current = false; }
+    };
+    const id = setInterval(syncNow, 90_000);
+    const t = setTimeout(syncNow, 2_000);
+    return () => { clearInterval(id); clearTimeout(t); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [calendarConnected]);
+
   // --- helpers ---------------------------------------------------------------
   const pushSystem = (text: string) =>
     setMessages((prev) => [...prev, { role: 'model', text, system: true }]);
@@ -433,6 +461,39 @@ export default function App() {
   }, [scheduled]);
   const hasRisk = atRisk.size > 0 || overdue.size > 0;
 
+  // The single most urgent open task — backs both the Execution panel
+  // ("up next" when nothing is in progress) and Panic mode (the one task
+  // shown when everything else is suppressed).
+  const openTasks = useMemo(() => tasks.filter((t) => t.status !== 'COMPLETED'), [tasks]);
+  const priorityTask = useMemo(() => {
+    if (openTasks.length === 0) return null;
+    return [...openTasks].sort((a, b) => {
+      const rank = URGENCY_RANK[a.urgency] - URGENCY_RANK[b.urgency];
+      if (rank !== 0) return rank;
+      const ad = a.deadline ? new Date(a.deadline).getTime() : Infinity;
+      const bd = b.deadline ? new Date(b.deadline).getTime() : Infinity;
+      return ad - bd;
+    })[0];
+  }, [openTasks]);
+  const inProgressTask = useMemo(() => tasks.find((t) => t.status === 'IN_PROGRESS') ?? null, [tasks]);
+  const executionTask = inProgressTask ?? priorityTask;
+  const overdueTasks = useMemo(() => tasks.filter((t) => overdue.has(t.id)), [tasks, overdue]);
+
+  const markTaskDone = async (task: Task) => {
+    const updated = await api.patchTask(task.id, { status: 'COMPLETED' });
+    setTasks((prev) => prev.map((t) => (t.id === task.id ? updated : t)));
+    refreshStatus();
+    if (task.goal_id) api.listGoals().then(setGoals).catch(() => {});
+  };
+
+  const startFocusOnTask = async (task: Task) => {
+    const updated = await api.patchTask(task.id, { status: 'IN_PROGRESS' });
+    setTasks((prev) => prev.map((t) => (t.id === task.id ? updated : t)));
+    setPomoSeconds(POMODORO_SECONDS);
+    setPomoRunning(true);
+    api.startSession(task.task_name, POMODORO_SECONDS / 60).then((s) => setPomoSessionId(s.id)).catch(() => {});
+  };
+
   if (authLoading) {
     return (
       <div className="min-h-screen bg-[#F5F2ED] text-[#1A1A1A] flex items-center justify-center">
@@ -553,6 +614,25 @@ export default function App() {
             <p className="font-sans text-xs opacity-80 max-w-[45%] text-right">{modeMeta.blurb}</p>
           </div>
 
+          {/* Panic mode: suppress everything else, show exactly one task */}
+          {tab === 'plan' && mode === 'PANIC_MODE' && priorityTask && (
+            <PanicPanel task={priorityTask} onMarkDone={markTaskDone} />
+          )}
+
+          {/* Active Execution Panel: one task, a timer, the next micro-step */}
+          {tab === 'plan' && mode !== 'PANIC_MODE' && executionTask && (
+            <ExecutionPanel
+              task={executionTask}
+              isActive={executionTask.status === 'IN_PROGRESS'}
+              pomoSeconds={pomoSeconds}
+              pomoRunning={pomoRunning}
+              onStartFocus={startFocusOnTask}
+              onToggleTimer={togglePomo}
+              onResetTimer={resetPomo}
+              onMarkDone={markTaskDone}
+            />
+          )}
+
           {/* Autonomous rescheduling banner */}
           <AnimatePresence>
             {hasRisk && (
@@ -649,8 +729,30 @@ export default function App() {
             <HabitsPanel habits={habits} onAdd={addHabit} onCheck={checkHabit} onDelete={deleteHabit} />
           )}
 
+          {/* Overdue: surfaced separately from the timeline so it can't be missed */}
+          {tab === 'plan' && mode !== 'PANIC_MODE' && overdueTasks.length > 0 && (
+            <div>
+              <div className="flex items-center gap-4 border-b border-[#D14D2A] pb-2 mb-3">
+                <AlertTriangle className="w-4 h-4 text-[#D14D2A]" />
+                <span className="font-sans text-[10px] uppercase tracking-widest font-black text-[#D14D2A]">Overdue</span>
+                <div className="h-[1px] flex-grow bg-[#D14D2A] opacity-20" />
+              </div>
+              <div className="space-y-2">
+                {overdueTasks.map((t) => (
+                  <div key={t.id} className="flex items-center gap-3 bg-white border-l-4 border-l-[#D14D2A] border border-[#1A1A1A]/15 px-3 py-2">
+                    <span className="font-sans text-sm truncate flex-grow">{t.task_name}</span>
+                    {t.deadline && <span className="font-sans text-[10px] uppercase opacity-60 whitespace-nowrap">Was due {fmtDeadline(t.deadline)}</span>}
+                    <button onClick={() => markTaskDone(t)} className="font-sans text-[10px] uppercase font-bold tracking-widest px-2 py-1 border border-[#1A1A1A] hover:bg-[#1A1A1A] hover:text-white transition-colors whitespace-nowrap">
+                      Done
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
           {/* Today's plan (schedule) */}
-          {tab === 'plan' && scheduled.length > 0 && (
+          {tab === 'plan' && mode !== 'PANIC_MODE' && scheduled.length > 0 && (
             <div>
               <div className="flex items-center gap-4 border-b border-[#1A1A1A] pb-2 mb-4">
                 <CalendarDays className="w-4 h-4" />
@@ -683,7 +785,7 @@ export default function App() {
           )}
 
           {/* Task board + toolbar */}
-          {tab === 'plan' && (
+          {tab === 'plan' && mode !== 'PANIC_MODE' && (
           <div className="flex-grow">
             <div className="flex items-center gap-3 border-b border-[#1A1A1A] pb-2 mb-4 flex-wrap">
               <span className="font-sans text-[10px] uppercase tracking-widest font-black">Task Board</span>
