@@ -307,7 +307,6 @@ export default function App() {
           setTasks(r.tasks);
           setAtRisk(new Set(r.at_risk));
           setOverdue(new Set(r.overdue));
-          pushSystem(`Autonomous reschedule: ${r.message}`);
           guardRef.current = false;
         }
       } catch { /* offline / backend down — ignore */ }
