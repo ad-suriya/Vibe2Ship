@@ -2,15 +2,14 @@
   box-sizing: border-box;
 }
 
-body, html, #root {
+body, html, #app-container {
   width: 380px;
-  height: 600px;
   margin: 0;
   padding: 0;
   font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell', sans-serif;
 }
 
-#root {
+#app-container {
   display: flex;
   flex-direction: column;
 }
