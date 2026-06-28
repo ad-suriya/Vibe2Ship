@@ -606,13 +606,52 @@ def remove_habit(habit_id: int, user: dict = Depends(get_current_user)) -> dict:
 
 
 # --- Sessions (#9 time tracking) ------------------------------------------------
+STALE_SESSION_MINUTES = 240  # no real focus session runs unattended this long
+
+
 @app.get("/api/sessions")
 def get_sessions(user: dict = Depends(get_current_user)) -> List[dict]:
-    return db.list_sessions(user["id"])
+    """List sessions, lazily closing out abandoned ones so today/week totals
+    (which sum elapsed time across every still-open session) can't be
+    inflated by duplicates or a session nobody ever hit Stop on:
+    - only one session should ever be open at a time — if several are (e.g.
+      popup, dashboard chat, and Execution panel each started one before
+      this endpoint enforced that), keep the newest and close the rest;
+    - the one that remains gets closed too if it's been open implausibly
+      long (browser/tab closed without stopping it).
+    """
+    now = datetime.now()
+    now_iso = now.replace(microsecond=0).isoformat()
+    sessions = db.list_sessions(user["id"])
+    open_sessions = sorted((s for s in sessions if not s.get("end_time")), key=lambda s: s["id"])
+
+    for s in open_sessions[:-1]:
+        closed = db.update_session(s["id"], user["id"], end_time=now_iso)
+        if closed:
+            s.update(closed)
+
+    if open_sessions:
+        newest = open_sessions[-1]
+        elapsed_minutes = (now - datetime.fromisoformat(newest["start_time"])).total_seconds() / 60
+        if elapsed_minutes > STALE_SESSION_MINUTES:
+            closed = db.update_session(newest["id"], user["id"], end_time=now_iso)
+            if closed:
+                newest.update(closed)
+
+    return sessions
 
 
 @app.post("/api/sessions")
 def add_session(body: SessionCreate, user: dict = Depends(get_current_user)) -> dict:
+    # Only one focus session can be running at a time — popup, dashboard chat
+    # ("start a pomodoro"), and the Execution panel's "Start Focus" all hit
+    # this endpoint independently with no shared client-side state, so without
+    # this an abandoned/forgotten session never gets closed and silently
+    # accumulates elapsed time into today/week totals forever.
+    now = datetime.now().replace(microsecond=0).isoformat()
+    for s in db.list_sessions(user["id"]):
+        if not s.get("end_time"):
+            db.update_session(s["id"], user["id"], end_time=now)
     return db.create_session(user["id"], description=body.description, project_id=body.project_id, duration_minutes=body.duration_minutes)
 
 
