@@ -103,6 +103,18 @@ npm install
 npm run dev
 ```
 
+## Sharing Without the Chrome Web Store
+
+For reviewers/organizers who just want to try the extension without building from source:
+
+1. Build and zip it: `pnpm zip` (outputs to `dist-zip/extension-<timestamp>.zip`)
+2. Share that zip file (Drive, GitHub release, etc.)
+3. Ask them to:
+   - Unzip it
+   - Open `chrome://extensions/`
+   - Enable **Developer mode**
+   - Click **Load unpacked** and select the unzipped folder
+
 ## Available Scripts
 
 - `pnpm dev` - Start development mode with HMR

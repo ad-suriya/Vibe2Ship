@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Task Weave — Judge Installation Guide</title>
+<style>
+  :root {
+    --ink: #1A1A1A;
+    --paper: #F5F2ED;
+    --accent: #D14D2A;
+    --teal: #2A6B5E;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    line-height: 1.6;
+  }
+  .wrap {
+    max-width: 720px;
+    margin: 0 auto;
+    padding: 48px 24px 80px;
+  }
+  .eyebrow {
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    opacity: 0.6;
+  }
+  h1 {
+    font-size: 2.2rem;
+    font-weight: 900;
+    font-style: italic;
+    margin: 4px 0 32px;
+    letter-spacing: -0.01em;
+  }
+  h2 {
+    font-size: 1.1rem;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    margin: 40px 0 12px;
+    padding-bottom: 8px;
+    border-bottom: 2px solid var(--ink);
+  }
+  p { margin: 0 0 14px; }
+  .callout {
+    background: #fff;
+    border: 2px solid var(--ink);
+    box-shadow: 6px 6px 0 var(--ink);
+    padding: 20px 24px;
+    margin: 16px 0 24px;
+  }
+  .callout.warn { border-color: var(--accent); box-shadow: 6px 6px 0 var(--accent); }
+  .callout-label { display: block; font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--accent); margin-bottom: 6px; font-weight: 800; }
+  ol, ul { padding-left: 22px; margin: 12px 0; }
+  li { margin-bottom: 10px; }
+  code {
+    background: rgba(26,26,26,0.07);
+    padding: 2px 6px;
+    border-radius: 3px;
+    font-size: 0.9em;
+  }
+  a { color: var(--teal); font-weight: 700; text-decoration: underline; }
+  .btn {
+    display: inline-block;
+    background: var(--ink);
+    color: #fff !important;
+    padding: 14px 28px;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    font-size: 13px;
+    text-decoration: none;
+    border: 2px solid var(--ink);
+    box-shadow: 5px 5px 0 var(--accent);
+    margin: 8px 0 8px;
+  }
+  .btn:hover { background: #333; }
+  footer {
+    margin-top: 56px;
+    padding-top: 20px;
+    border-top: 1px solid rgba(26,26,26,0.2);
+    font-size: 12px;
+    opacity: 0.6;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="eyebrow">Task Weave — Submission Notes</div>
+    <h1>How to install &amp; test this entry</h1>
+    <p style="margin-top: -20px;">
+      This page is hosted on the live app itself — the dashboard you'll sign into in step 2 lives at
+      <a href="/">this same site's homepage</a>.
+    </p>
+
+    <h2>Why a Drive link, not the Chrome Web Store</h2>
+    <p>
+      Task Weave is a Chrome extension paired with a web dashboard. Normally a Chrome extension
+      gets distributed through the Chrome Web Store — but Google's store listing review can take
+      anywhere from a few days to a couple of weeks, which doesn't fit inside a hackathon judging
+      window. So instead of a store link, this submission ships as a pre-built, ready-to-load
+      extension package via Google Drive, installed the same way any developer loads an
+      in-progress extension locally: <strong>Developer mode → Load unpacked</strong>.
+    </p>
+    <p>This is the standard, Google-documented way to run an extension that hasn't been published yet — nothing here requires bypassing browser security, just enabling the one developer toggle Chrome ships for exactly this case.</p>
+
+    <h2>1. Download the extension</h2>
+    <p>
+      <a class="btn" href="https://drive.google.com/file/d/1RF3e7Tv3DZfdtwaSQtrOLnAtwmUOzW_6/view?usp=sharing" target="_blank" rel="noopener">Download from Google Drive</a>
+    </p>
+    <p>Unzip it once downloaded — you should get a folder containing <code>manifest.json</code> and a handful of subfolders (<code>popup</code>, <code>focus-lock</code>, <code>task-capture</code>, etc.).</p>
+
+    <h2>2. Load it into Chrome</h2>
+    <ol>
+      <li>Open <code>chrome://extensions</code> in the address bar.</li>
+      <li>Toggle <strong>Developer mode</strong> on (top-right corner).</li>
+      <li>Click <strong>Load unpacked</strong>.</li>
+      <li>Select the unzipped folder.</li>
+      <li>"Task Weave" should now appear in your extensions list and toolbar.</li>
+    </ol>
+
+    <div class="callout">
+      <span class="callout-label">Sign in to unlock task &amp; focus features</span>
+      <p style="margin:0;">
+        Click the extension icon → <strong>Dashboard</strong>, which opens the live web app and
+        signs you in with Google. Once signed in there, the extension picks up the same session
+        automatically — no separate login inside the popup.
+      </p>
+    </div>
+
+    <h2>3. What to try</h2>
+    <ul>
+      <li><strong>AI planning chat</strong> — on the dashboard, type something like "exam tomorrow, need to revise DSA and DBMS" and watch it get broken into tasks with a next micro-step each.</li>
+      <li><strong>Task capture</strong> — on any webpage, right-click → "Add to Task Weave," or press <code>⌘⇧Y</code> (Mac) / <code>Ctrl+Shift+Y</code> (Windows) to capture the page as a task. Works without signing in.</li>
+      <li><strong>Focus timer + task picker</strong> — open the extension popup, pick a task (🎯 button) or type a custom focus, hit Start.</li>
+      <li><strong>Distraction blocking</strong> — with a focus session running, try visiting YouTube/Instagram/X/Reddit — it redirects to a lock screen until the session ends. Works without signing in.</li>
+      <li><strong>Workflows</strong> — on the dashboard's Workflows page, describe a recurring procedure in plain English and watch AI turn it into an automation.</li>
+    </ul>
+
+    <div class="callout warn">
+      <span class="callout-label">One thing to know</span>
+      <p style="margin:0;">
+        This points at our live backend and database, not a sandbox — anything you create (tasks,
+        sessions, goals) is real data in our production Firestore. Fine for a demo, just not
+        isolated per-judge.
+      </p>
+    </div>
+
+    <footer>Task Weave · Anxiety, into Action.</footer>
+  </div>
+</body>
+</html>
