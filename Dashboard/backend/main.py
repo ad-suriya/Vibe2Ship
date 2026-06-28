@@ -7,7 +7,7 @@ autonomous rescheduling, and calendar (.ics) export.
 import secrets
 import time
 import urllib.parse
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
@@ -609,6 +609,14 @@ def remove_habit(habit_id: int, user: dict = Depends(get_current_user)) -> dict:
 STALE_SESSION_MINUTES = 240  # no real focus session runs unattended this long
 
 
+def _as_utc(dt: datetime) -> datetime:
+    """Treat a naive datetime as UTC — old records written before now_iso()
+    became timezone-aware have no offset, but they were always real UTC
+    instants (Cloud Run's local clock is UTC), so this avoids a crash
+    comparing them against an aware `now` without silently mis-shifting them."""
+    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+
+
 @app.get("/api/sessions")
 def get_sessions(user: dict = Depends(get_current_user)) -> List[dict]:
     """List sessions, lazily closing out abandoned ones so today/week totals
@@ -620,7 +628,7 @@ def get_sessions(user: dict = Depends(get_current_user)) -> List[dict]:
     - the one that remains gets closed too if it's been open implausibly
       long (browser/tab closed without stopping it).
     """
-    now = datetime.now()
+    now = datetime.now(timezone.utc)
     now_iso = now.replace(microsecond=0).isoformat()
     sessions = db.list_sessions(user["id"])
     open_sessions = sorted((s for s in sessions if not s.get("end_time")), key=lambda s: s["id"])
@@ -632,7 +640,8 @@ def get_sessions(user: dict = Depends(get_current_user)) -> List[dict]:
 
     if open_sessions:
         newest = open_sessions[-1]
-        elapsed_minutes = (now - datetime.fromisoformat(newest["start_time"])).total_seconds() / 60
+        start = _as_utc(datetime.fromisoformat(newest["start_time"]))
+        elapsed_minutes = (now - start).total_seconds() / 60
         if elapsed_minutes > STALE_SESSION_MINUTES:
             closed = db.update_session(newest["id"], user["id"], end_time=now_iso)
             if closed:
@@ -648,7 +657,7 @@ def add_session(body: SessionCreate, user: dict = Depends(get_current_user)) -> 
     # this endpoint independently with no shared client-side state, so without
     # this an abandoned/forgotten session never gets closed and silently
     # accumulates elapsed time into today/week totals forever.
-    now = datetime.now().replace(microsecond=0).isoformat()
+    now = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
     for s in db.list_sessions(user["id"]):
         if not s.get("end_time"):
             db.update_session(s["id"], user["id"], end_time=now)

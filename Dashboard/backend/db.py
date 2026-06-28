@@ -9,7 +9,7 @@ path of a Firebase service-account JSON.
 """
 
 import os
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -25,7 +25,15 @@ _client = None
 
 
 def now_iso() -> str:
-    return datetime.now().replace(microsecond=0).isoformat()
+    # Timezone-aware UTC, not naive — Cloud Run's local clock IS UTC, but a
+    # naive "2026-06-28T14:30:00" string gets parsed by JS as LOCAL browser
+    # time (no "Z"/offset to say otherwise), silently shifting it by the
+    # user's UTC offset. The frontend always writes timestamps back via
+    # `toISOString()` (always UTC-with-Z), so the two must match or any
+    # duration computed as (frontend_time - this_time) is wrong by exactly
+    # that offset — which is how a handful of test sessions turned into 28+
+    # accumulated hours.
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
 
 
 def today_str() -> str:

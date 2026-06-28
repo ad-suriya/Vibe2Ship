@@ -1,6 +1,6 @@
 """Mock in-memory database for testing without Firebase credentials."""
 
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from typing import Optional
 
 _data = {
@@ -32,7 +32,8 @@ def _db():
 
 
 def now_iso() -> str:
-    return datetime.now().replace(microsecond=0).isoformat()
+    # Kept timezone-aware to match db.py (see its now_iso for why).
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
 
 
 def today_str() -> str:
