@@ -1,6 +1,6 @@
 import React, { useEffect } from 'react';
 import { cn, LoadingSpinner } from '@extension/ui';
-import { authStorage } from '@extension/storage';
+import { authStorage, FRONTEND_URL } from '@extension/storage';
 
 interface LoginProps {
   isLight: boolean;
@@ -10,7 +10,7 @@ interface LoginProps {
 
 export const Login: React.FC<LoginProps> = ({ isLight, onLoginSuccess, isLoading = false }) => {
   const handleOpenDashboard = () => {
-    chrome.tabs.create({ url: 'http://localhost:5173' });
+    chrome.tabs.create({ url: FRONTEND_URL });
     // After opening dashboard, periodically check if user logged in
     const checkInterval = setInterval(async () => {
       const state = await authStorage.get();

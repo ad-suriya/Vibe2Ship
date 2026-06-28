@@ -51,7 +51,14 @@ const manifest = {
   },
   content_scripts: [
     {
-      matches: ['http://localhost:5173/*', 'http://localhost:3000/*'],
+      // Local dev origins plus the deployed Cloud Run frontend — without the
+      // latter, logging in on the deployed dashboard never reaches the
+      // extension since this bridge script wouldn't be injected there.
+      matches: [
+        'http://localhost:5173/*',
+        'http://localhost:3000/*',
+        'https://task-weave-684807093732.asia-south1.run.app/*',
+      ],
       js: ['content/dashboard-bridge.iife.js'],
     },
     {

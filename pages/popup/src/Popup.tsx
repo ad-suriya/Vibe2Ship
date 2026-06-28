@@ -1,7 +1,7 @@
 import '@src/Popup.css';
 import { useEffect, useState } from 'react';
 import { useStorage, withErrorBoundary, withSuspense } from '@extension/shared';
-import { exampleThemeStorage, authStorage, focusSessionStorage, tasksStorage, blockingStorage, blockedSitesStorage } from '@extension/storage';
+import { exampleThemeStorage, authStorage, focusSessionStorage, tasksStorage, blockingStorage, blockedSitesStorage, FRONTEND_URL, API_BASE } from '@extension/storage';
 import { cn, LoadingSpinner, TimeTracker } from '@extension/ui';
 import { Login } from './Login';
 import type { FocusSession, Task } from '@extension/types';
@@ -27,7 +27,7 @@ function Popup() {
 
     authStorage.get().then(auth => {
       if (!auth.accessToken) return;
-      fetch('http://localhost:8000/api/me', {
+      fetch(`${API_BASE}/me`, {
         headers: { Authorization: `Bearer ${auth.accessToken}` },
       })
         .then(response => {
@@ -145,7 +145,7 @@ function Popup() {
   };
 
   const openDashboard = () => {
-    chrome.tabs.create({ url: 'http://localhost:5173' });
+    chrome.tabs.create({ url: FRONTEND_URL });
   };
 
   const handleLogout = async () => {
