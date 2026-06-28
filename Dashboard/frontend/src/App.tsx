@@ -220,7 +220,7 @@ export default function App() {
       } catch { /* offline — try again next tick */ }
     };
     sync();
-    const id = setInterval(sync, 20_000);
+    const id = setInterval(sync, 5_000);
     return () => clearInterval(id);
   }, [isAuthenticated]);
 
@@ -688,7 +688,7 @@ export default function App() {
 
           {/* System triggers */}
           <AnimatePresence>
-            {trigger === 'START_POMODORO' && (
+            {(trigger === 'START_POMODORO' || pomoSessionId != null) && (
               <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }}
                 className="bg-[#1A1A1A] text-white p-5 flex items-center justify-between shadow-[5px_5px_0px_0px_#D14D2A]">
                 <div className="flex items-center gap-4">
