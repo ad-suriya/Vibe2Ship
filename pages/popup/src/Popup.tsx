@@ -216,7 +216,7 @@ function Popup() {
   return (
     <div
       className={cn('w-full flex flex-col p-4 gap-4 font-sans', isLight ? 'bg-paper text-ink' : 'bg-ink text-paper')}
-      style={{ width: '380px', minHeight: '500px' }}
+      style={{ width: '380px' }}
     >
       {/* Time Totals */}
       <div className="flex gap-3 text-center">
