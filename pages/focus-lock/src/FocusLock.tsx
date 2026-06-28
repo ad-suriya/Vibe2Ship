@@ -11,21 +11,24 @@ const FocusLock: React.FC = () => {
 
   useEffect(() => {
     const init = async () => {
-      try {
-        const params = new URLSearchParams(window.location.search);
-        const url = params.get('url') || window.location.href;
-        setBlockedUrl(url);
+      const params = new URLSearchParams(window.location.search);
+      const url = params.get('url') || window.location.href;
+      setBlockedUrl(url);
 
+      // Best-effort: pull the real session for the countdown / "+5 min".
+      // This hits the backend and needs a still-valid auth token (~1hr
+      // lifetime) — if it fails (expired token, backend hiccup, offline),
+      // still show the lock screen below instead of trapping the user on
+      // an infinite spinner with no override and no way out.
+      try {
         const currentSession = await focusSessionStorage.getCurrent();
         if (currentSession && !currentSession.endTime) {
           setSession(currentSession);
-
           const elapsed = (Date.now() - currentSession.startTime) / 1000 / 60;
-          const remaining = Math.max(0, currentSession.durationMinutes - elapsed);
-          setTimeLeft(remaining);
+          setTimeLeft(Math.max(0, currentSession.durationMinutes - elapsed));
         }
       } catch (err) {
-        console.error('Failed to initialize focus lock:', err);
+        console.error('Failed to load the active session (showing the lock screen without a countdown):', err);
       } finally {
         setIsLoading(false);
       }
@@ -67,7 +70,7 @@ const FocusLock: React.FC = () => {
     window.history.back();
   };
 
-  if (isLoading || !session) {
+  if (isLoading) {
     return (
       <div className="min-h-screen flex items-center justify-center">
         <div className="text-center space-y-4">

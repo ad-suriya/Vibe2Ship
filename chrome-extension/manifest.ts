@@ -69,7 +69,12 @@ const manifest = {
   ],
   web_accessible_resources: [
     {
-      resources: ['*.js', '*.css', '*.svg', 'icon-128.png', 'icon-34.png'],
+      // *.html was missing here — focus-blocking.ts's content-script redirect
+      // to focus-lock/index.html got silently blocked by Chrome (not loadable
+      // from a web page without being listed), surfacing as a generic
+      // chrome-error://chromewebdata page instead of the lock screen. Caught
+      // by actually driving a loaded extension in a browser, not by review.
+      resources: ['*.js', '*.css', '*.svg', '*.html', 'icon-128.png', 'icon-34.png'],
       matches: ['*://*/*'],
     },
   ],

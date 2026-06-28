@@ -512,6 +512,9 @@ importers:
       '@extension/hmr':
         specifier: workspace:*
         version: link:../../packages/hmr
+      '@extension/tailwindcss-config':
+        specifier: workspace:*
+        version: link:../../packages/tailwindcss-config
       '@extension/tsconfig':
         specifier: workspace:*
         version: link:../../packages/tsconfig
