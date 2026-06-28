@@ -8,6 +8,7 @@ import { LoginPage } from './LoginPage';
 import {
   Loader2, Send, Copy, Check, Timer, CalendarPlus, Play, Pause, RotateCcw,
   Plus, CalendarDays, RefreshCw, Trash2, Download, Clock, AlertTriangle, ArrowRight, Link2, Unlink,
+  MessageCircle, X, HelpCircle,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { api } from './api';
@@ -20,7 +21,10 @@ import HabitsPanel from './components/HabitsPanel';
 import ExecutionPanel from './components/ExecutionPanel';
 import PanicPanel from './components/PanicPanel';
 import SearchBar from './components/SearchBar';
+import GuidedTour from './components/GuidedTour';
+import NotificationPrompt from './components/NotificationPrompt';
 import WorkflowsPanel from './components/WorkflowsPanel';
+import Sidebar, { Section } from './components/Sidebar';
 
 const MODE_META: Record<Mode, { label: string; color: string; blurb: string }> = {
   PLANNING_MODE: { label: 'Planning', color: '#2A6B5E', blurb: 'Deadline is days out — be strategic.' },
@@ -97,7 +101,10 @@ export default function App() {
   const [goals, setGoals] = useState<Goal[]>([]);
   const [habits, setHabits] = useState<Habit[]>([]);
   const [workflows, setWorkflows] = useState<Workflow[]>([]);
-  const [tab, setTab] = useState<'plan' | 'goals' | 'habits' | 'workflows'>('plan');
+  const [tab, setTab] = useState<Section>('plan');
+  const [chatOpen, setChatOpen] = useState(true);
+  const [showTutorial, setShowTutorial] = useState(false);
+  const [showNotifPrompt, setShowNotifPrompt] = useState(false);
 
   const [calendarConnected, setCalendarConnected] = useState(false);
   const [calendarBusy, setCalendarBusy] = useState(false);
@@ -199,6 +206,16 @@ export default function App() {
     api.listHabits().then(setHabits).catch(() => {});
     api.listWorkflows().then(setWorkflows).catch(() => {});
     api.calendarStatus().then((s) => setCalendarConnected(s.connected)).catch(() => {});
+
+    if (!localStorage.getItem('tutorialSeen')) setShowTutorial(true);
+
+    // Ask for notification permission up front instead of leaving it buried
+    // in the Reminders bell dropdown where most people would never find it.
+    // Only if the browser hasn't already been asked (or denied) — re-asking
+    // after a denial just gets auto-rejected and annoys people.
+    if (typeof Notification !== 'undefined' && Notification.permission === 'default' && !localStorage.getItem('notifPromptSeen')) {
+      setShowNotifPrompt(true);
+    }
   }, [isAuthenticated]);
 
   // Sync the timer with whatever session is actually active on the backend —
@@ -238,6 +255,24 @@ export default function App() {
     }));
     setIsAuthenticated(false);
     setAuthUser(null);
+  };
+
+  const dismissTutorial = () => {
+    localStorage.setItem('tutorialSeen', '1');
+    setShowTutorial(false);
+  };
+
+  const enableNotifications = async () => {
+    if (typeof Notification !== 'undefined') {
+      try { await Notification.requestPermission(); } catch { /* unsupported */ }
+    }
+    localStorage.setItem('notifPromptSeen', '1');
+    setShowNotifPrompt(false);
+  };
+
+  const dismissNotifPrompt = () => {
+    localStorage.setItem('notifPromptSeen', '1');
+    setShowNotifPrompt(false);
   };
 
   useEffect(() => {
@@ -574,110 +609,82 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen bg-[#F5F2ED] text-[#1A1A1A] font-serif flex flex-col p-4 md:p-8 overflow-x-hidden">
-      {/* Header */}
-      <header className="flex flex-col md:flex-row justify-between md:items-baseline border-b border-[#1A1A1A] pb-5 mb-6 gap-3">
-        <div className="flex flex-col">
-          <span className="font-sans text-[10px] uppercase tracking-widest font-bold opacity-60 mb-1">
-            Task Weave / Live Session
-          </span>
-          <h1 className="text-3xl md:text-4xl font-black italic tracking-tight leading-none">Anxiety, into Action.</h1>
-        </div>
-        <div className="flex items-center gap-3 md:justify-end flex-wrap">
-          <SearchBar onSelectTask={selectSearchTask} onSelectGoal={selectSearchGoal} onSelectHabit={selectSearchHabit} />
-          <RemindersBell />
-          <button
-            onClick={calendarConnected ? disconnectCalendar : connectCalendar}
-            disabled={calendarBusy}
-            title={calendarConnected ? 'Disconnect Google Calendar' : 'Sync your schedule with Google Calendar'}
-            className="font-sans text-[10px] uppercase tracking-widest font-bold px-3 py-1 border border-[#1A1A1A] hover:bg-[#1A1A1A] hover:text-white transition-colors flex items-center gap-1 disabled:opacity-40"
-          >
-            {calendarBusy ? <Loader2 className="w-3 h-3 animate-spin" /> : calendarConnected ? <Unlink className="w-3 h-3" /> : <Link2 className="w-3 h-3" />}
-            {calendarConnected ? 'Calendar Synced' : 'Sync Google Calendar'}
-          </button>
-          {authUser && (
-            <div className="font-sans text-[10px] opacity-70">
-              {authUser.name}
-            </div>
-          )}
-          <span className="font-sans text-[10px] uppercase tracking-widest font-bold opacity-60">Mode</span>
-          <span className="font-sans text-[11px] font-bold uppercase tracking-widest px-3 py-1 text-white" style={{ backgroundColor: modeMeta.color }}>
-            {modeMeta.label}
-          </span>
-          <button
-            onClick={handleLogout}
-            className="font-sans text-[10px] uppercase tracking-widest font-bold px-3 py-1 border border-[#1A1A1A] hover:bg-[#1A1A1A] hover:text-white transition-colors"
-          >
-            Logout
-          </button>
-        </div>
-      </header>
+    <div className="min-h-screen bg-[#F5F2ED] text-[#1A1A1A] font-serif flex overflow-x-hidden">
+      {showTutorial && <GuidedTour onDismiss={dismissTutorial} />}
+      <Sidebar active={tab} onSelect={setTab} badges={{ workflows: workflows.length || undefined }} />
 
-      <main className="flex-grow w-full max-w-7xl mx-auto grid grid-cols-1 lg:grid-cols-12 gap-6">
-        {/* ---------------- Chat panel ---------------- */}
-        <section className="lg:col-span-5 flex flex-col bg-white border border-[#1A1A1A] shadow-[6px_6px_0px_0px_#1A1A1A] min-h-[60vh] lg:min-h-0 lg:h-[80vh]">
-          <div className="flex items-center gap-3 border-b border-[#1A1A1A] px-5 py-3">
-            <div className="w-2 h-2 rounded-full bg-[#D14D2A] animate-pulse" />
-            <span className="font-sans text-[10px] uppercase tracking-widest font-black">Conversation</span>
+      <div className="flex-grow flex flex-col min-w-0">
+        <Sidebar horizontal active={tab} onSelect={setTab} badges={{ workflows: workflows.length || undefined }} />
+
+        {/* Top bar */}
+        <header className="relative z-50 flex flex-col md:flex-row justify-between md:items-center border-b border-[#1A1A1A] bg-white px-4 md:px-6 py-3 gap-3">
+          <div className="flex items-center gap-2">
+            <span className="font-sans text-[10px] uppercase tracking-widest font-bold opacity-60">Mode</span>
+            <span className="font-sans text-[11px] font-bold uppercase tracking-widest px-3 py-1 text-white" style={{ backgroundColor: modeMeta.color }}>
+              {modeMeta.label}
+            </span>
           </div>
-
-          <div className="flex-grow overflow-y-auto px-5 py-4 space-y-4">
-            {messages.map((m, i) => (
-              <div key={i} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                <div className={`max-w-[85%] font-sans text-sm leading-relaxed px-4 py-3 ${
-                  m.role === 'user' ? 'bg-[#1A1A1A] text-white'
-                    : m.system ? 'bg-[#2A6B5E]/10 border border-[#2A6B5E]/40 text-[#1A1A1A] italic'
-                    : 'bg-[#F5F2ED] border border-[#1A1A1A]/15'
-                }`}>
-                  {m.system && <span className="block text-[9px] uppercase tracking-widest font-bold text-[#2A6B5E] mb-1 not-italic">System</span>}
-                  {m.text}
-                </div>
-              </div>
-            ))}
-            {loading && (
-              <div className="flex justify-start">
-                <div className="bg-[#F5F2ED] border border-[#1A1A1A]/15 px-4 py-3 flex items-center gap-2 font-sans text-xs uppercase tracking-widest">
-                  <Loader2 className="w-4 h-4 animate-spin text-[#D14D2A]" /> Thinking
-                </div>
+          <div className="flex items-center gap-3 md:justify-end flex-wrap">
+            <div data-tour="search-bar">
+              <SearchBar onSelectTask={selectSearchTask} onSelectGoal={selectSearchGoal} onSelectHabit={selectSearchHabit} />
+            </div>
+            <RemindersBell />
+            <button
+              onClick={calendarConnected ? disconnectCalendar : connectCalendar}
+              disabled={calendarBusy}
+              title={calendarConnected ? 'Disconnect Google Calendar' : 'Sync your schedule with Google Calendar'}
+              className="font-sans text-[10px] uppercase tracking-widest font-bold px-3 py-1 border border-[#1A1A1A] hover:bg-[#1A1A1A] hover:text-white transition-colors flex items-center gap-1 disabled:opacity-40"
+            >
+              {calendarBusy ? <Loader2 className="w-3 h-3 animate-spin" /> : calendarConnected ? <Unlink className="w-3 h-3" /> : <Link2 className="w-3 h-3" />}
+              {calendarConnected ? 'Calendar Synced' : 'Sync Google Calendar'}
+            </button>
+            <button
+              data-tour="chat-toggle"
+              onClick={() => setChatOpen((s) => !s)}
+              title={chatOpen ? 'Close chat' : 'Open chat'}
+              className={`font-sans text-[10px] uppercase tracking-widest font-bold px-3 py-1 border border-[#1A1A1A] transition-colors flex items-center gap-1 ${
+                chatOpen ? 'bg-[#1A1A1A] text-white' : 'hover:bg-[#1A1A1A] hover:text-white'
+              }`}
+            >
+              <MessageCircle className="w-3 h-3" /> Chat
+            </button>
+            <button
+              onClick={() => { setTab('plan'); setShowTutorial(true); }}
+              title="Replay the guided tour"
+              aria-label="Replay the guided tour"
+              className="p-1.5 border border-[#1A1A1A] hover:bg-[#1A1A1A] hover:text-white transition-colors"
+            >
+              <HelpCircle className="w-3 h-3" />
+            </button>
+            {authUser && (
+              <div className="font-sans text-[10px] opacity-70">
+                {authUser.name}
               </div>
             )}
-            <div ref={chatEndRef} />
-          </div>
-
-          {quickReplies.length > 0 && !loading && (
-            <div className="px-5 pb-2 flex flex-wrap gap-2">
-              {quickReplies.map((q, i) => (
-                <button key={i} onClick={() => send(q)}
-                  className="font-sans text-[11px] font-bold px-3 py-2 border border-[#1A1A1A] hover:bg-[#1A1A1A] hover:text-white transition-colors text-left">
-                  {q}
-                </button>
-              ))}
-            </div>
-          )}
-          {error && <div className="px-5 py-2 font-sans text-[11px] font-bold uppercase text-[#D14D2A]">{error}</div>}
-
-          <div className="border-t border-[#1A1A1A] p-3 flex gap-2 items-end">
-            <textarea
-              className="flex-grow h-16 p-3 border border-[#1A1A1A]/30 bg-white font-sans text-sm focus:outline-none focus:ring-1 focus:ring-[#1A1A1A] resize-none"
-              placeholder="Tell me what's due and where you're stuck…"
-              value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={handleKeyDown} disabled={loading} />
-            <button onClick={() => send(input)} disabled={loading || !input.trim()}
-              className="h-16 px-5 bg-[#1A1A1A] hover:bg-[#333] disabled:bg-gray-400 text-white flex items-center justify-center shadow-[3px_3px_0px_0px_#D14D2A] transition-colors" aria-label="Send">
-              <Send className="w-4 h-4" />
+            <button
+              onClick={handleLogout}
+              className="font-sans text-[10px] uppercase tracking-widest font-bold px-3 py-1 border border-[#1A1A1A] hover:bg-[#1A1A1A] hover:text-white transition-colors"
+            >
+              Logout
             </button>
           </div>
-        </section>
+        </header>
 
-        {/* ---------------- Dashboard ---------------- */}
-        <section className="lg:col-span-7 flex flex-col gap-5 lg:h-[80vh] lg:overflow-y-auto pr-1">
-          {/* Mode strip */}
-          <div className="text-white p-5 flex items-center justify-between shadow-[5px_5px_0px_0px_rgba(26,26,26,0.15)]" style={{ backgroundColor: modeMeta.color }}>
-            <div>
-              <span className="font-sans text-[10px] uppercase tracking-widest font-bold opacity-70">Current Mode</span>
-              <p className="text-2xl font-black italic">{modeMeta.label}</p>
-            </div>
-            <p className="font-sans text-xs opacity-80 max-w-[45%] text-right">{modeMeta.blurb}</p>
-          </div>
+      {/* Row: main content + chat panel as real flex siblings, so opening
+          chat shrinks the content column instead of covering it. */}
+      <div className="flex-grow flex flex-row min-h-0 overflow-hidden">
+      <div className="flex-grow flex flex-col justify-between min-w-0 overflow-y-auto">
+      <main className="w-full flex flex-col gap-5 p-4 md:p-8">
+          {/* Capped at a readable width — only the Task Board below breaks
+              out to fill the screen, everything above it reads better narrow. */}
+          <div className="w-full max-w-3xl flex flex-col gap-5">
+          {showNotifPrompt && (
+            <NotificationPrompt onEnable={enableNotifications} onDismiss={dismissNotifPrompt} />
+          )}
+
+          {tab === 'plan' && (
+            <p className="font-sans text-xs opacity-60 -mb-2">{modeMeta.blurb}</p>
+          )}
 
           {/* Panic mode: suppress everything else, show exactly one task */}
           {tab === 'plan' && mode === 'PANIC_MODE' && priorityTask && (
@@ -777,16 +784,6 @@ export default function App() {
             )}
           </AnimatePresence>
 
-          {/* Dashboard tabs */}
-          <div className="flex gap-1 border-b border-[#1A1A1A]">
-            {(['plan', 'goals', 'habits', 'workflows'] as const).map((t) => (
-              <button key={t} onClick={() => setTab(t)}
-                className={`font-sans text-[10px] uppercase font-black tracking-widest px-4 py-2 transition-colors ${tab === t ? 'bg-[#1A1A1A] text-white' : 'hover:bg-[#1A1A1A]/5'}`}>
-                {t}
-              </button>
-            ))}
-          </div>
-
           {tab === 'goals' && (
             <GoalsPanel goals={goals} onAdd={addGoal} onIncrement={incGoal} onDelete={deleteGoal} />
           )}
@@ -858,11 +855,13 @@ export default function App() {
               </div>
             </div>
           )}
+          </div>
 
-          {/* Task board + toolbar */}
+          {/* Task board + toolbar — breaks out of the max-w-3xl column above
+              to actually use the full screen width. */}
           {tab === 'plan' && mode !== 'PANIC_MODE' && (
-          <div className="flex-grow">
-            <div className="flex items-center gap-3 border-b border-[#1A1A1A] pb-2 mb-4 flex-wrap">
+          <div className="flex-grow w-full">
+            <div data-tour="task-toolbar" className="flex items-center gap-3 border-b border-[#1A1A1A] pb-2 mb-4 flex-wrap">
               <span className="font-sans text-[10px] uppercase tracking-widest font-black">Task Board</span>
               <div className="h-[1px] flex-grow bg-[#1A1A1A] opacity-20 min-w-[20px]" />
               <button onClick={() => setShowAdd((s) => !s)} className="font-sans text-[10px] uppercase font-bold tracking-widest flex items-center gap-1 px-2 py-1 border border-[#1A1A1A] hover:bg-[#1A1A1A] hover:text-white transition-colors">
@@ -910,7 +909,7 @@ export default function App() {
                 Your tasks will appear here once you tell me what's on your plate — or add one manually.
               </div>
             ) : (
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
                 {tasks.map((task) => {
                   const done = task.status === 'COMPLETED';
                   return (
@@ -946,13 +945,78 @@ export default function App() {
             )}
           </div>
           )}
-        </section>
       </main>
 
-      <footer className="mt-6 pt-5 flex flex-col md:flex-row justify-between md:items-center border-t border-[#1A1A1A] gap-2">
+      <footer className="px-4 md:px-8 py-3 border-t border-[#1A1A1A] bg-white">
         <div className="font-sans text-[10px] uppercase font-black opacity-60">Proactive Engine Online</div>
-        <div className="font-sans text-[10px] uppercase font-black italic opacity-60">Zero-friction starts. Real deadlines met.</div>
       </footer>
+      </div>
+
+      {/* Chat: a real flex sibling of the content column above, not an
+          overlay — opening it shrinks the content width instead of
+          covering it. Stays mounted (width animates to 0) so scroll
+          position / in-progress typing survive a toggle. */}
+      <aside className={`shrink-0 bg-white border-l border-[#1A1A1A] flex flex-col overflow-hidden transition-[width] duration-200 ${
+        chatOpen ? 'w-full sm:w-[420px]' : 'w-0 border-l-0'
+      }`}>
+        <div className="flex items-center justify-between gap-3 border-b border-[#1A1A1A] px-5 py-3">
+          <div className="flex items-center gap-3">
+            <div className="w-2 h-2 rounded-full bg-[#D14D2A] animate-pulse" />
+            <span className="font-sans text-[10px] uppercase tracking-widest font-black">Conversation</span>
+          </div>
+          <button onClick={() => setChatOpen(false)} aria-label="Close chat" className="p-1 hover:text-[#D14D2A]">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+
+        <div className="flex-grow overflow-y-auto px-5 py-4 space-y-4">
+          {messages.map((m, i) => (
+            <div key={i} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+              <div className={`max-w-[85%] font-sans text-sm leading-relaxed px-4 py-3 ${
+                m.role === 'user' ? 'bg-[#1A1A1A] text-white'
+                  : m.system ? 'bg-[#2A6B5E]/10 border border-[#2A6B5E]/40 text-[#1A1A1A] italic'
+                  : 'bg-[#F5F2ED] border border-[#1A1A1A]/15'
+              }`}>
+                {m.system && <span className="block text-[9px] uppercase tracking-widest font-bold text-[#2A6B5E] mb-1 not-italic">System</span>}
+                {m.text}
+              </div>
+            </div>
+          ))}
+          {loading && (
+            <div className="flex justify-start">
+              <div className="bg-[#F5F2ED] border border-[#1A1A1A]/15 px-4 py-3 flex items-center gap-2 font-sans text-xs uppercase tracking-widest">
+                <Loader2 className="w-4 h-4 animate-spin text-[#D14D2A]" /> Thinking
+              </div>
+            </div>
+          )}
+          <div ref={chatEndRef} />
+        </div>
+
+        {quickReplies.length > 0 && !loading && (
+          <div className="px-5 pb-2 flex flex-wrap gap-2">
+            {quickReplies.map((q, i) => (
+              <button key={i} onClick={() => send(q)}
+                className="font-sans text-[11px] font-bold px-3 py-2 border border-[#1A1A1A] hover:bg-[#1A1A1A] hover:text-white transition-colors text-left">
+                {q}
+              </button>
+            ))}
+          </div>
+        )}
+        {error && <div className="px-5 py-2 font-sans text-[11px] font-bold uppercase text-[#D14D2A]">{error}</div>}
+
+        <div className="border-t border-[#1A1A1A] p-3 flex gap-2 items-end">
+          <textarea
+            className="flex-grow h-16 p-3 border border-[#1A1A1A]/30 bg-white font-sans text-sm focus:outline-none focus:ring-1 focus:ring-[#1A1A1A] resize-none"
+            placeholder="Tell me what's due and where you're stuck…"
+            value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={handleKeyDown} disabled={loading} />
+          <button onClick={() => send(input)} disabled={loading || !input.trim()}
+            className="h-16 px-5 bg-[#1A1A1A] hover:bg-[#333] disabled:bg-gray-400 text-white flex items-center justify-center shadow-[3px_3px_0px_0px_#D14D2A] transition-colors" aria-label="Send">
+            <Send className="w-4 h-4" />
+          </button>
+        </div>
+      </aside>
+      </div>
+      </div>
     </div>
   );
 }
