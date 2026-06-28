@@ -650,6 +650,27 @@ def get_sessions(user: dict = Depends(get_current_user)) -> List[dict]:
     return sessions
 
 
+def _push_session_event(user_id: str, session: dict, scheduled_end: str) -> dict:
+    """Best-effort create/update of the Google Calendar event mirroring a
+    focus session — same push_event() the task scheduler uses, just fed a
+    session-shaped dict instead of a task. No-op if Calendar isn't connected."""
+    token = _calendar_access_token(user_id)
+    if not token:
+        return session
+    event_id = calendar_sync.push_event(token, {
+        "task_name": session.get("description") or "Focus Session",
+        "next_micro_step": "",
+        "scheduled_start": session["start_time"],
+        "scheduled_end": scheduled_end,
+        "calendar_event_id": session.get("calendar_event_id"),
+    })
+    if event_id and event_id != session.get("calendar_event_id"):
+        updated = db.update_session(session["id"], user_id, calendar_event_id=event_id)
+        if updated:
+            return updated
+    return session
+
+
 @app.post("/api/sessions")
 def add_session(body: SessionCreate, user: dict = Depends(get_current_user)) -> dict:
     # Only one focus session can be running at a time — popup, dashboard chat
@@ -661,18 +682,34 @@ def add_session(body: SessionCreate, user: dict = Depends(get_current_user)) -> 
     for s in db.list_sessions(user["id"]):
         if not s.get("end_time"):
             db.update_session(s["id"], user["id"], end_time=now)
-    return db.create_session(user["id"], description=body.description, project_id=body.project_id, duration_minutes=body.duration_minutes)
+    session = db.create_session(user["id"], description=body.description, project_id=body.project_id, duration_minutes=body.duration_minutes)
+
+    # Auto-add to Google Calendar immediately, sized to the planned duration —
+    # corrected to the real end time once the session actually stops.
+    start = _as_utc(datetime.fromisoformat(session["start_time"]))
+    planned_end = (start + timedelta(minutes=body.duration_minutes or 25)).isoformat()
+    return _push_session_event(user["id"], session, planned_end)
 
 
 @app.patch("/api/sessions/{session_id}")
 def patch_session(session_id: int, body: SessionPatch, user: dict = Depends(get_current_user)) -> dict:
     if not db.get_session(session_id, user["id"]):
         raise HTTPException(status_code=404, detail="Session not found.")
-    return db.update_session(session_id, user["id"], **body.model_dump(exclude_none=True))  # type: ignore[return-value]
+    updated = db.update_session(session_id, user["id"], **body.model_dump(exclude_none=True))
+    if body.end_time and updated:
+        # The session just stopped — true-up the calendar event's end time to
+        # when it actually ended instead of the originally planned duration.
+        updated = _push_session_event(user["id"], updated, body.end_time)
+    return updated  # type: ignore[return-value]
 
 
 @app.delete("/api/sessions/{session_id}")
 def remove_session(session_id: int, user: dict = Depends(get_current_user)) -> dict:
+    session = db.get_session(session_id, user["id"])
+    if session and session.get("calendar_event_id"):
+        token = _calendar_access_token(user["id"])
+        if token:
+            calendar_sync.delete_event(token, session["calendar_event_id"])
     if not db.delete_session(session_id, user["id"]):
         raise HTTPException(status_code=404, detail="Session not found.")
     return {"deleted": session_id}

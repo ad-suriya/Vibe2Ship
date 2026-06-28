@@ -331,6 +331,7 @@ def create_session(user_id: str, description: str = "", project_id: Optional[int
         "is_paused": False,
         "breaks_taken": 0,
         "total_break_minutes": 0,
+        "calendar_event_id": None,
         "created_at": ts,
         "updated_at": ts,
     }
@@ -340,7 +341,7 @@ def create_session(user_id: str, description: str = "", project_id: Optional[int
 
 def update_session(session_id: int, user_id: str, **fields) -> Optional[dict]:
     allowed = {"description", "project_id", "end_time", "duration_minutes",
-               "is_paused", "breaks_taken", "total_break_minutes"}
+               "is_paused", "breaks_taken", "total_break_minutes", "calendar_event_id"}
     session = _data["sessions"].get(session_id)
     if not session or session["user_id"] != user_id:
         return None
