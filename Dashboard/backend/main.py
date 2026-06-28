@@ -40,6 +40,7 @@ import habits as habits_mod
 import ics
 import reminders as reminders_mod
 import scheduler
+import search as search_mod
 
 app = FastAPI(title="Task Weave Engine")
 
@@ -165,6 +166,34 @@ class ProjectCreate(BaseModel):
 class ProjectPatch(BaseModel):
     name: Optional[str] = None
     color: Optional[str] = None
+
+
+class WorkflowGenerateRequest(BaseModel):
+    sop_text: str
+
+
+class WorkflowStepIn(BaseModel):
+    task_name: str
+    urgency: engine.Urgency = engine.Urgency.MEDIUM
+    estimated_minutes: int = 30
+    tags: List[str] = []
+
+
+class WorkflowCreate(BaseModel):
+    name: str
+    sop_text: str = ""
+    trigger_type: engine.WorkflowTriggerType = engine.WorkflowTriggerType.MANUAL
+    trigger_match: str = ""
+    steps: List[WorkflowStepIn]
+    active: bool = True
+
+
+class WorkflowPatch(BaseModel):
+    name: Optional[str] = None
+    trigger_type: Optional[engine.WorkflowTriggerType] = None
+    trigger_match: Optional[str] = None
+    steps: Optional[List[WorkflowStepIn]] = None
+    active: Optional[bool] = None
 
 
 def regen_reminders(user_id: str) -> None:
@@ -372,15 +401,27 @@ def patch_task(task_id: int, body: TaskPatch, user: dict = Depends(get_current_u
         fields["urgency"] = body.urgency.value  # type: ignore[union-attr]
     updated = db.update_task(task_id, user["id"], **fields)
 
+    was_done = before["status"] == "COMPLETED"
+    now_done = bool(updated) and updated["status"] == "COMPLETED"  # type: ignore[index]
+
     # Keep a linked goal's progress in sync when a task is completed/reopened.
     goal_id = updated["goal_id"] if updated else None
     if goal_id:
-        was_done = before["status"] == "COMPLETED"
-        now_done = updated["status"] == "COMPLETED"  # type: ignore[index]
         if now_done and not was_done:
             db.adjust_goal(goal_id, user["id"], 1)
         elif was_done and not now_done:
             db.adjust_goal(goal_id, user["id"], -1)
+
+    # AI Workflow Builder: fire any ON_TASK_COMPLETE workflow whose keyword
+    # appears in the task that just got completed.
+    if now_done and not was_done and updated:
+        task_name = updated["task_name"].lower()  # type: ignore[index]
+        for wf in db.list_workflows(user["id"]):
+            if not wf.get("active") or wf.get("trigger_type") != "ON_TASK_COMPLETE":
+                continue
+            if (wf.get("trigger_match") or "").lower() in task_name:
+                run_workflow_now(wf["id"], user)  # noqa: F821 (defined below, same module)
+
     return updated  # type: ignore[return-value]
 
 
@@ -395,6 +436,22 @@ def remove_task(task_id: int, user: dict = Depends(get_current_user)) -> dict:
             calendar_sync.delete_event(token, task["calendar_event_id"])
     db.delete_task(task_id, user["id"])
     return {"deleted": task_id}
+
+
+# --- AI Search Assistant --------------------------------------------------------
+@app.get("/api/search")
+def search(q: str = "", user: dict = Depends(get_current_user)) -> dict:
+    query = q.strip()
+    if not query:
+        return {"tasks": [], "goals": [], "habits": [], "sessions": []}
+    candidates = search_mod.build_candidates(
+        db.list_tasks(user["id"]), db.list_goals(user["id"]),
+        db.list_habits_raw(user["id"]), db.list_sessions(user["id"]),
+    )
+    matches = search_mod.substring_match(query, candidates)
+    if not matches:
+        matches = engine.search_rank(query, candidates)
+    return search_mod.group(matches)
 
 
 # --- AI scheduling ------------------------------------------------------------
@@ -421,6 +478,10 @@ def schedule(user: dict = Depends(get_current_user)) -> dict:
 # --- Autonomous rescheduling --------------------------------------------------
 @app.get("/api/status")
 def status(user: dict = Depends(get_current_user)) -> dict:
+    # Piggyback DAILY/WEEKLY workflow checks on this poll (frontend already
+    # hits it every 60s for autonomous rescheduling) rather than standing up
+    # a separate cron/worker just for this.
+    _run_due_workflows(user["id"])
     return scheduler.analyze(db.list_tasks(user["id"]))
 
 
@@ -738,3 +799,91 @@ def remove_project(project_id: int, user: dict = Depends(get_current_user)) -> d
     if not db.delete_project(project_id, user["id"]):
         raise HTTPException(status_code=404, detail="Project not found.")
     return {"deleted": project_id}
+
+
+# --- AI Workflow Builder ---------------------------------------------------------
+@app.post("/api/workflows/generate")
+def generate_workflow_draft(body: WorkflowGenerateRequest, user: dict = Depends(get_current_user)) -> dict:
+    """Turn a plain-English SOP into a structured draft (trigger + steps) for
+    the user to review — not saved yet, see POST /api/workflows for that."""
+    if not body.sop_text.strip():
+        raise HTTPException(status_code=400, detail="sop_text must not be empty.")
+    if not engine.configured():
+        raise HTTPException(status_code=500, detail="GEMINI_API_KEY not configured.")
+    try:
+        plan = engine.generate_workflow(body.sop_text)
+    except Exception as err:  # noqa: BLE001
+        if engine.is_transient(err):
+            raise HTTPException(status_code=503, detail="The AI model is busy. Try again in a moment.")
+        raise HTTPException(status_code=500, detail=str(err))
+    return plan.model_dump()
+
+
+@app.get("/api/workflows")
+def get_workflows(user: dict = Depends(get_current_user)) -> List[dict]:
+    return db.list_workflows(user["id"])
+
+
+@app.post("/api/workflows")
+def add_workflow(body: WorkflowCreate, user: dict = Depends(get_current_user)) -> dict:
+    return db.create_workflow(
+        user["id"], name=body.name, sop_text=body.sop_text, trigger_type=body.trigger_type.value,
+        trigger_match=body.trigger_match, steps=[s.model_dump() for s in body.steps], active=body.active,
+    )
+
+
+@app.patch("/api/workflows/{workflow_id}")
+def patch_workflow(workflow_id: int, body: WorkflowPatch, user: dict = Depends(get_current_user)) -> dict:
+    if not db.get_workflow(workflow_id, user["id"]):
+        raise HTTPException(status_code=404, detail="Workflow not found.")
+    fields = body.model_dump(exclude_none=True)
+    if "trigger_type" in fields:
+        fields["trigger_type"] = body.trigger_type.value  # type: ignore[union-attr]
+    if "steps" in fields:
+        fields["steps"] = [s.model_dump() if hasattr(s, "model_dump") else s for s in body.steps]  # type: ignore[union-attr]
+    return db.update_workflow(workflow_id, user["id"], **fields)  # type: ignore[return-value]
+
+
+@app.delete("/api/workflows/{workflow_id}")
+def remove_workflow(workflow_id: int, user: dict = Depends(get_current_user)) -> dict:
+    if not db.delete_workflow(workflow_id, user["id"]):
+        raise HTTPException(status_code=404, detail="Workflow not found.")
+    return {"deleted": workflow_id}
+
+
+@app.post("/api/workflows/{workflow_id}/run")
+def run_workflow_now(workflow_id: int, user: dict = Depends(get_current_user)) -> dict:
+    workflow = db.get_workflow(workflow_id, user["id"])
+    if not workflow:
+        raise HTTPException(status_code=404, detail="Workflow not found.")
+    created = [
+        db.create_task(user["id"], task_name=step["task_name"], urgency=step.get("urgency", "MEDIUM"),
+                        estimated_minutes=step.get("estimated_minutes", 30), tags=step.get("tags", []))
+        for step in workflow.get("steps", [])
+    ]
+    db.update_workflow(workflow_id, user["id"], last_run=datetime.now(timezone.utc).replace(microsecond=0).isoformat())
+    return {"created": created}
+
+
+def _run_due_workflows(user_id: str) -> None:
+    """Run any active DAILY/WEEKLY workflow that hasn't fired in its current
+    period yet. Best-effort — a workflow failing to run shouldn't break the
+    /api/status poll that triggers this."""
+    now = datetime.now(timezone.utc)
+    for wf in db.list_workflows(user_id):
+        if not wf.get("active") or wf.get("trigger_type") not in ("DAILY", "WEEKLY"):
+            continue
+        last_run = wf.get("last_run")
+        due = True
+        if last_run:
+            try:
+                last = _as_utc(datetime.fromisoformat(last_run))
+                due = (last.date() != now.date()) if wf["trigger_type"] == "DAILY" \
+                    else (last.isocalendar()[:2] != now.isocalendar()[:2])
+            except ValueError:
+                due = True
+        if due:
+            try:
+                run_workflow_now(wf["id"], {"id": user_id})
+            except Exception:  # noqa: BLE001 — never let a bad workflow break /api/status
+                pass

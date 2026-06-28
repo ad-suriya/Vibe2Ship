@@ -12,13 +12,15 @@ import {
 import { motion, AnimatePresence } from 'motion/react';
 import { api } from './api';
 import {
-  AgenticAction, ChatMessage, Goal, Habit, Mode, Status, SystemTrigger, Task, Urgency,
+  AgenticAction, ChatMessage, Goal, Habit, Mode, Status, SystemTrigger, Task, Urgency, Workflow, WorkflowPlan,
 } from './types';
 import RemindersBell from './components/RemindersBell';
 import GoalsPanel from './components/GoalsPanel';
 import HabitsPanel from './components/HabitsPanel';
 import ExecutionPanel from './components/ExecutionPanel';
 import PanicPanel from './components/PanicPanel';
+import SearchBar from './components/SearchBar';
+import WorkflowsPanel from './components/WorkflowsPanel';
 
 const MODE_META: Record<Mode, { label: string; color: string; blurb: string }> = {
   PLANNING_MODE: { label: 'Planning', color: '#2A6B5E', blurb: 'Deadline is days out — be strategic.' },
@@ -94,7 +96,8 @@ export default function App() {
 
   const [goals, setGoals] = useState<Goal[]>([]);
   const [habits, setHabits] = useState<Habit[]>([]);
-  const [tab, setTab] = useState<'plan' | 'goals' | 'habits'>('plan');
+  const [workflows, setWorkflows] = useState<Workflow[]>([]);
+  const [tab, setTab] = useState<'plan' | 'goals' | 'habits' | 'workflows'>('plan');
 
   const [calendarConnected, setCalendarConnected] = useState(false);
   const [calendarBusy, setCalendarBusy] = useState(false);
@@ -194,6 +197,7 @@ export default function App() {
     api.listTasks().then(setTasks).catch(() => {});
     api.listGoals().then(setGoals).catch(() => {});
     api.listHabits().then(setHabits).catch(() => {});
+    api.listWorkflows().then(setWorkflows).catch(() => {});
     api.calendarStatus().then((s) => setCalendarConnected(s.connected)).catch(() => {});
   }, [isAuthenticated]);
 
@@ -423,6 +427,33 @@ export default function App() {
     setHabits((prev) => prev.filter((x) => x.id !== id));
   };
 
+  // --- workflows handlers (AI Workflow Builder) ------------------------------
+  const generateWorkflowDraft = (sopText: string) => api.generateWorkflow(sopText);
+  const saveWorkflow = async (plan: WorkflowPlan, sopText: string) => {
+    const w = await api.createWorkflow({ ...plan, sop_text: sopText, active: true });
+    setWorkflows((prev) => [...prev, w]);
+  };
+  const toggleWorkflowActive = async (id: number, active: boolean) => {
+    const w = await api.patchWorkflow(id, { active });
+    setWorkflows((prev) => prev.map((x) => (x.id === id ? w : x)));
+  };
+  const runWorkflow = async (id: number) => {
+    const { created } = await api.runWorkflow(id);
+    setTasks((prev) => [...prev, ...created]);
+    api.listWorkflows().then(setWorkflows).catch(() => {});
+    pushSystem(`Workflow ran — added ${created.length} task${created.length === 1 ? '' : 's'}.`);
+  };
+  const deleteWorkflowById = async (id: number) => {
+    await api.deleteWorkflow(id);
+    setWorkflows((prev) => prev.filter((x) => x.id !== id));
+  };
+
+  // Search result selection: jump to the relevant tab. Tasks live on the
+  // "plan" tab already, so there's nothing more specific to scroll to yet.
+  const selectSearchTask = (_task: Task) => setTab('plan');
+  const selectSearchGoal = () => setTab('goals');
+  const selectSearchHabit = () => setTab('habits');
+
   const connectCalendar = () => {
     // Calendar access is granted via the same full-page OAuth redirect as
     // sign-in (it's requested as part of that scope) — re-running it with
@@ -553,6 +584,7 @@ export default function App() {
           <h1 className="text-3xl md:text-4xl font-black italic tracking-tight leading-none">Anxiety, into Action.</h1>
         </div>
         <div className="flex items-center gap-3 md:justify-end flex-wrap">
+          <SearchBar onSelectTask={selectSearchTask} onSelectGoal={selectSearchGoal} onSelectHabit={selectSearchHabit} />
           <RemindersBell />
           <button
             onClick={calendarConnected ? disconnectCalendar : connectCalendar}
@@ -747,7 +779,7 @@ export default function App() {
 
           {/* Dashboard tabs */}
           <div className="flex gap-1 border-b border-[#1A1A1A]">
-            {(['plan', 'goals', 'habits'] as const).map((t) => (
+            {(['plan', 'goals', 'habits', 'workflows'] as const).map((t) => (
               <button key={t} onClick={() => setTab(t)}
                 className={`font-sans text-[10px] uppercase font-black tracking-widest px-4 py-2 transition-colors ${tab === t ? 'bg-[#1A1A1A] text-white' : 'hover:bg-[#1A1A1A]/5'}`}>
                 {t}
@@ -757,6 +789,16 @@ export default function App() {
 
           {tab === 'goals' && (
             <GoalsPanel goals={goals} onAdd={addGoal} onIncrement={incGoal} onDelete={deleteGoal} />
+          )}
+          {tab === 'workflows' && (
+            <WorkflowsPanel
+              workflows={workflows}
+              onGenerate={generateWorkflowDraft}
+              onSave={saveWorkflow}
+              onToggleActive={toggleWorkflowActive}
+              onRun={runWorkflow}
+              onDelete={deleteWorkflowById}
+            />
           )}
           {tab === 'habits' && (
             <HabitsPanel habits={habits} onAdd={addHabit} onCheck={checkHabit} onDelete={deleteHabit} />

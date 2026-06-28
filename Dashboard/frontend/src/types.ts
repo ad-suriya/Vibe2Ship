@@ -144,3 +144,37 @@ export interface ChatMessage {
   text: string;
   system?: boolean; // engine/system note rendered distinctly in the chat
 }
+
+// --- AI Search Assistant --------------------------------------------------
+export interface SearchResults {
+  tasks: Task[];
+  goals: Goal[];
+  habits: Habit[];
+  sessions: Session[];
+}
+
+// --- AI Workflow Builder ---------------------------------------------------
+export type WorkflowTriggerType = 'DAILY' | 'WEEKLY' | 'ON_TASK_COMPLETE' | 'MANUAL';
+
+export interface WorkflowStep {
+  task_name: string;
+  urgency: Urgency;
+  estimated_minutes: number;
+  tags: string[];
+}
+
+export interface WorkflowPlan {
+  name: string;
+  trigger_type: WorkflowTriggerType;
+  trigger_match: string;
+  steps: WorkflowStep[];
+}
+
+export interface Workflow extends WorkflowPlan {
+  id: number;
+  sop_text: string;
+  active: boolean;
+  last_run: string | null;
+  created_at: string;
+  updated_at: string;
+}

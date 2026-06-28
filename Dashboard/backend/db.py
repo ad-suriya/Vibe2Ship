@@ -380,6 +380,46 @@ def delete_session(session_id: int, user_id: str) -> bool:
     return _delete("sessions", session_id, user_id)
 
 
+# --- Workflows (AI Workflow Builder) -------------------------------------------
+def list_workflows(user_id: str) -> list[dict]:
+    return sorted(_all("workflows", user_id), key=lambda w: w["id"])
+
+
+def get_workflow(workflow_id: int, user_id: str) -> Optional[dict]:
+    return _get("workflows", workflow_id, user_id)
+
+
+def create_workflow(user_id: str, name: str, sop_text: str, trigger_type: str,
+                     trigger_match: str, steps: list[dict], active: bool = True) -> dict:
+    ts = now_iso()
+    return _save("workflows", {
+        "id": _next_id("workflows"),
+        "user_id": user_id,
+        "name": name,
+        "sop_text": sop_text,
+        "trigger_type": trigger_type,
+        "trigger_match": trigger_match,
+        "steps": steps,
+        "active": active,
+        "last_run": None,
+        "created_at": ts,
+        "updated_at": ts,
+    })
+
+
+def update_workflow(workflow_id: int, user_id: str, **fields) -> Optional[dict]:
+    allowed = {"name", "sop_text", "trigger_type", "trigger_match", "steps", "active", "last_run"}
+    sets = {k: v for k, v in fields.items() if k in allowed and v is not None}
+    if not sets:
+        return get_workflow(workflow_id, user_id)
+    sets["updated_at"] = now_iso()
+    return _patch("workflows", workflow_id, sets, user_id)
+
+
+def delete_workflow(workflow_id: int, user_id: str) -> bool:
+    return _delete("workflows", workflow_id, user_id)
+
+
 # --- Projects -----------------------------------------------------------------
 def list_projects(user_id: str) -> list[dict]:
     return sorted(_all("projects", user_id), key=lambda p: p["id"])

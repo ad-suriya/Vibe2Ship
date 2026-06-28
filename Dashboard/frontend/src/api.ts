@@ -5,10 +5,13 @@ import {
   Reminder,
   RescheduleResult,
   ScheduleResult,
+  SearchResults,
   Session,
   StatusInfo,
   Task,
   Urgency,
+  Workflow,
+  WorkflowPlan,
 } from './types';
 
 function authHeaders(extra: Record<string, string> = {}): Record<string, string> {
@@ -130,4 +133,18 @@ export const api = {
     fetch('/api/calendar/disconnect', { method: 'POST', headers: authHeaders() }).then(handle<{ connected: boolean }>),
   calendarSync: () =>
     fetch('/api/calendar/sync', { method: 'POST', headers: authHeaders() }).then(handle<{ tasks: Task[]; imported: number }>),
+
+  // AI Search Assistant
+  search: (q: string) => fetch(`/api/search?q=${encodeURIComponent(q)}`, { headers: authHeaders() }).then(handle<SearchResults>),
+
+  // AI Workflow Builder
+  generateWorkflow: (sop_text: string) =>
+    fetch('/api/workflows/generate', { method: 'POST', headers: jsonHeaders(), body: JSON.stringify({ sop_text }) }).then(handle<WorkflowPlan>),
+  listWorkflows: () => fetch('/api/workflows', { headers: authHeaders() }).then(handle<Workflow[]>),
+  createWorkflow: (body: WorkflowPlan & { sop_text: string; active?: boolean }) =>
+    fetch('/api/workflows', { method: 'POST', headers: jsonHeaders(), body: JSON.stringify(body) }).then(handle<Workflow>),
+  patchWorkflow: (id: number, body: Partial<Pick<Workflow, 'active' | 'name'>>) =>
+    fetch(`/api/workflows/${id}`, { method: 'PATCH', headers: jsonHeaders(), body: JSON.stringify(body) }).then(handle<Workflow>),
+  deleteWorkflow: (id: number) => fetch(`/api/workflows/${id}`, { method: 'DELETE', headers: authHeaders() }).then(handle<{ deleted: number }>),
+  runWorkflow: (id: number) => fetch(`/api/workflows/${id}/run`, { method: 'POST', headers: authHeaders() }).then(handle<{ created: Task[] }>),
 };

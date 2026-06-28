@@ -13,6 +13,7 @@ _data = {
     "projects": {},
     "users": {},
     "calendar_accounts": {},
+    "workflows": {},
     "counters": {},
 }
 
@@ -23,6 +24,7 @@ _next_ids = {
     "habits": 1,
     "sessions": 1,
     "projects": 1,
+    "workflows": 1,
 }
 
 
@@ -47,12 +49,17 @@ def init_db() -> None:
 
 # --- Tasks
 def list_tasks(user_id: str) -> list[dict]:
-    return sorted((t for t in _data["tasks"].values() if t["user_id"] == user_id), key=lambda t: t["id"])
+    # Copies, not the live stored dicts — db.py's Firestore equivalent always
+    # returns a fresh snapshot, so code comparing a value fetched here against
+    # the same record after a later update_task() call (e.g. was_done/now_done
+    # checks) must see the pre-update state, not a reference that update_task
+    # mutates in place underneath it.
+    return sorted((dict(t) for t in _data["tasks"].values() if t["user_id"] == user_id), key=lambda t: t["id"])
 
 
 def get_task(task_id: int, user_id: str) -> Optional[dict]:
     task = _data["tasks"].get(task_id)
-    return task if task and task["user_id"] == user_id else None
+    return dict(task) if task and task["user_id"] == user_id else None
 
 
 def create_task(user_id: str, task_name, status="TODO", urgency="MEDIUM", estimated_minutes=30,
@@ -190,7 +197,7 @@ def clear_auto_reminders(user_id: str) -> None:
 # --- Goals
 def list_goals(user_id: str) -> list[dict]:
     tasks = [t for t in _data["tasks"].values() if t["user_id"] == user_id]
-    goals = sorted((g for g in _data["goals"].values() if g["user_id"] == user_id), key=lambda g: g["id"])
+    goals = sorted((dict(g) for g in _data["goals"].values() if g["user_id"] == user_id), key=lambda g: g["id"])
     for g in goals:
         linked = [t for t in tasks if t.get("goal_id") == g["id"]]
         g["linked_total"] = len(linked)
@@ -200,7 +207,7 @@ def list_goals(user_id: str) -> list[dict]:
 
 def get_goal(gid: int, user_id: str) -> Optional[dict]:
     goal = _data["goals"].get(gid)
-    return goal if goal and goal["user_id"] == user_id else None
+    return dict(goal) if goal and goal["user_id"] == user_id else None
 
 
 def create_goal(user_id: str, title, description="", metric="steps", target_value=1, deadline=None) -> dict:
@@ -255,7 +262,7 @@ def delete_goal(gid: int, user_id: str) -> bool:
 
 # --- Habits
 def list_habits_raw(user_id: str) -> list[dict]:
-    return sorted((h for h in _data["habits"].values() if h["user_id"] == user_id), key=lambda h: h["id"])
+    return sorted((dict(h) for h in _data["habits"].values() if h["user_id"] == user_id), key=lambda h: h["id"])
 
 
 def habit_log_dates(habit_id: int) -> list[str]:
@@ -279,7 +286,7 @@ def create_habit(user_id: str, name: str, cadence: str = "DAILY") -> dict:
 
 def get_habit(hid: int, user_id: str) -> Optional[dict]:
     habit = _data["habits"].get(hid)
-    return habit if habit and habit["user_id"] == user_id else None
+    return dict(habit) if habit and habit["user_id"] == user_id else None
 
 
 def toggle_habit_today(hid: int, user_id: str) -> bool:
@@ -308,12 +315,12 @@ def delete_habit(hid: int, user_id: str) -> bool:
 
 # --- Sessions
 def list_sessions(user_id: str) -> list[dict]:
-    return sorted((s for s in _data["sessions"].values() if s["user_id"] == user_id), key=lambda s: s["id"])
+    return sorted((dict(s) for s in _data["sessions"].values() if s["user_id"] == user_id), key=lambda s: s["id"])
 
 
 def get_session(session_id: int, user_id: str) -> Optional[dict]:
     session = _data["sessions"].get(session_id)
-    return session if session and session["user_id"] == user_id else None
+    return dict(session) if session and session["user_id"] == user_id else None
 
 
 def create_session(user_id: str, description: str = "", project_id: Optional[int] = None, duration_minutes: int = 0) -> dict:
@@ -360,14 +367,66 @@ def delete_session(session_id: int, user_id: str) -> bool:
     return False
 
 
+# --- Workflows (AI Workflow Builder)
+def list_workflows(user_id: str) -> list[dict]:
+    return sorted((dict(w) for w in _data["workflows"].values() if w["user_id"] == user_id), key=lambda w: w["id"])
+
+
+def get_workflow(workflow_id: int, user_id: str) -> Optional[dict]:
+    workflow = _data["workflows"].get(workflow_id)
+    return dict(workflow) if workflow and workflow["user_id"] == user_id else None
+
+
+def create_workflow(user_id: str, name: str, sop_text: str, trigger_type: str,
+                     trigger_match: str, steps: list[dict], active: bool = True) -> dict:
+    workflow_id = _next_ids["workflows"]
+    _next_ids["workflows"] += 1
+    ts = now_iso()
+    workflow = {
+        "id": workflow_id,
+        "user_id": user_id,
+        "name": name,
+        "sop_text": sop_text,
+        "trigger_type": trigger_type,
+        "trigger_match": trigger_match,
+        "steps": steps,
+        "active": active,
+        "last_run": None,
+        "created_at": ts,
+        "updated_at": ts,
+    }
+    _data["workflows"][workflow_id] = workflow
+    return workflow
+
+
+def update_workflow(workflow_id: int, user_id: str, **fields) -> Optional[dict]:
+    allowed = {"name", "sop_text", "trigger_type", "trigger_match", "steps", "active", "last_run"}
+    workflow = _data["workflows"].get(workflow_id)
+    if not workflow or workflow["user_id"] != user_id:
+        return None
+    for k, v in fields.items():
+        if k in allowed and v is not None:
+            workflow[k] = v
+    workflow["updated_at"] = now_iso()
+    return workflow
+
+
+def delete_workflow(workflow_id: int, user_id: str) -> bool:
+    workflow = _data["workflows"].get(workflow_id)
+    if workflow and workflow["user_id"] == user_id:
+        del _data["workflows"][workflow_id]
+        return True
+    return False
+
+
 # --- Projects
 def list_projects(user_id: str) -> list[dict]:
-    return sorted((p for p in _data["projects"].values() if p["user_id"] == user_id), key=lambda p: p["id"])
+    return sorted((dict(p) for p in _data["projects"].values() if p["user_id"] == user_id), key=lambda p: p["id"])
 
 
 def get_project(project_id: int, user_id: str) -> Optional[dict]:
     project = _data["projects"].get(project_id)
-    return project if project and project["user_id"] == user_id else None
+    return dict(project) if project and project["user_id"] == user_id else None
 
 
 def create_project(user_id: str, name: str, color: str = "#2563eb") -> dict:

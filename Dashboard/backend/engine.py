@@ -214,3 +214,103 @@ def plan_message(summary_context: str, now: Optional[datetime] = None) -> str:
         return text or "Your plan is updated — take the next step."
     except Exception:  # noqa: BLE001 - cosmetic, never fail the request on this
         return "Your plan is updated — take the next step."
+
+
+# --- AI Search Assistant -------------------------------------------------------
+class SearchMatch(BaseModel):
+    type: str
+    id: int
+
+
+class SearchResult(BaseModel):
+    matches: List[SearchMatch]
+
+
+def search_rank(query: str, candidates: List[dict]) -> List[dict]:
+    """Semantic fallback for when a plain substring search finds nothing —
+    asks Gemini to pick out items that are conceptually relevant to a
+    loosely-phrased query ("that email thing") rather than literal
+    substrings. Best-effort: search must never hard-fail."""
+    if not configured() or not candidates:
+        return []
+    listing = "\n".join(
+        f"{c['type']}:{c['id']} — {c['title']} :: {c['detail'][:80]}" for c in candidates[:120]
+    )
+    system = (
+        "You are a search relevance engine for a productivity app. Given a query "
+        "and a list of items (one per line, format 'type:id — title :: detail'), "
+        "return the ids of items that are genuinely relevant to what the user is "
+        "looking for, best match first. Be conservative — only real matches; "
+        "return an empty list if nothing actually fits."
+    )
+    try:
+        response = _generate(
+            [{"role": "user", "parts": [{"text": f"Query: {query}\n\nItems:\n{listing}"}]}],
+            system,
+            SearchResult,
+        )
+        parsed = getattr(response, "parsed", None)
+        if not isinstance(parsed, SearchResult):
+            text = getattr(response, "text", None)
+            parsed = SearchResult.model_validate_json(text) if text else SearchResult(matches=[])
+        wanted = {(m.type, m.id) for m in parsed.matches}
+        return [c for c in candidates if (c["type"], c["id"]) in wanted]
+    except Exception:  # noqa: BLE001
+        return []
+
+
+# --- AI Workflow Builder --------------------------------------------------------
+class WorkflowTriggerType(str, Enum):
+    DAILY = "DAILY"
+    WEEKLY = "WEEKLY"
+    ON_TASK_COMPLETE = "ON_TASK_COMPLETE"
+    MANUAL = "MANUAL"
+
+
+class WorkflowStep(BaseModel):
+    task_name: str
+    urgency: Urgency
+    estimated_minutes: int
+    tags: List[str]
+
+
+class WorkflowPlan(BaseModel):
+    name: str
+    trigger_type: WorkflowTriggerType
+    trigger_match: str  # keyword for ON_TASK_COMPLETE; empty otherwise
+    steps: List[WorkflowStep]
+
+
+WORKFLOW_SYSTEM = """\
+You convert a plain-English standard operating procedure (SOP) into a \
+structured, automatable workflow for a task-management app.
+
+Pick exactly one trigger_type:
+- DAILY: the SOP should run every day.
+- WEEKLY: the SOP should run once a week.
+- ON_TASK_COMPLETE: the SOP should run right after a specific kind of task is \
+  completed (e.g. "after I finish a client call, ..."). Set trigger_match to \
+  the short keyword/phrase that identifies that task (e.g. "client call"). \
+  Leave trigger_match empty for every other trigger_type.
+- MANUAL: use this if the SOP doesn't imply a recurring schedule or a \
+  task-completion trigger — it only runs when the user clicks Run.
+
+steps: the concrete tasks this workflow should create each time it runs, in \
+the order they should happen, each with a realistic urgency and \
+estimated_minutes. Keep task_name short and actionable.
+"""
+
+
+def generate_workflow(sop_text: str) -> WorkflowPlan:
+    response = _generate(
+        [{"role": "user", "parts": [{"text": sop_text}]}],
+        WORKFLOW_SYSTEM,
+        WorkflowPlan,
+    )
+    parsed = getattr(response, "parsed", None)
+    if isinstance(parsed, WorkflowPlan):
+        return parsed
+    text = getattr(response, "text", None)
+    if not text:
+        raise RuntimeError("No content returned from Gemini.")
+    return WorkflowPlan.model_validate_json(text)
