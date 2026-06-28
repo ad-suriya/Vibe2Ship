@@ -114,6 +114,7 @@ export const api = {
 
   // Focus sessions — same /api/sessions resource the extension popup polls,
   // so starting/ending one here shows up there too.
+  listSessions: () => fetch('/api/sessions', { headers: authHeaders() }).then(handle<Session[]>),
   startSession: (description = '', durationMinutes = 0) =>
     fetch('/api/sessions', {
       method: 'POST',

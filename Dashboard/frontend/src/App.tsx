@@ -197,6 +197,33 @@ export default function App() {
     api.calendarStatus().then((s) => setCalendarConnected(s.connected)).catch(() => {});
   }, [isAuthenticated]);
 
+  // Sync the timer with whatever session is actually active on the backend —
+  // without this, a session started from the extension popup (or this same
+  // page before a reload) never shows up here: pomoSeconds/pomoRunning were
+  // purely local state with nothing ever reading back from /api/sessions.
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    const sync = async () => {
+      try {
+        const sessions = await api.listSessions();
+        const active = sessions.filter((s) => !s.end_time).sort((a, b) => b.id - a.id)[0];
+        if (!active) {
+          setPomoSessionId(null);
+          setPomoRunning(false);
+          return;
+        }
+        const elapsedSeconds = Math.floor((Date.now() - new Date(active.start_time).getTime()) / 1000);
+        const remaining = Math.max(0, active.duration_minutes * 60 - elapsedSeconds);
+        setPomoSessionId(active.id);
+        setPomoSeconds(remaining);
+        setPomoRunning(!active.is_paused && remaining > 0);
+      } catch { /* offline — try again next tick */ }
+    };
+    sync();
+    const id = setInterval(sync, 20_000);
+    return () => clearInterval(id);
+  }, [isAuthenticated]);
+
   const handleLogout = () => {
     localStorage.removeItem('auth');
     // Mirror the login path: the extension's dashboard-bridge content script
