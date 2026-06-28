@@ -15,7 +15,12 @@ const STEPS: Step[] = [
   {
     selector: '[data-tour="nav-plan"]',
     title: 'Plan',
-    body: 'Your tasks land on the Task Board. The Execution Panel above it always shows the one thing to do right now, with a timer.',
+    body: 'The Execution Panel here always shows the one thing to do right now, with a timer, plus your schedule and anything overdue.',
+  },
+  {
+    selector: '[data-tour="nav-board"]',
+    title: 'Tasks',
+    body: 'Every task lives on its own board here — zoomed out, full screen, separate from the day-to-day Plan view.',
   },
   {
     selector: '[data-tour="task-toolbar"]',
@@ -58,14 +63,20 @@ function findVisible(selector: string): HTMLElement | null {
 
 interface Props {
   onDismiss: () => void;
+  // Lets the parent switch to whatever page a step's target actually lives
+  // on (e.g. the Task Board moved to its own "Tasks" page) before this
+  // component goes looking for it in the DOM.
+  onStepChange?: (selector: string) => void;
 }
 
-export default function GuidedTour({ onDismiss }: Props) {
+export default function GuidedTour({ onDismiss, onStepChange }: Props) {
   const [step, setStep] = useState(0);
   const [rect, setRect] = useState<Rect | null>(null);
   const isLast = step === STEPS.length - 1;
 
   useEffect(() => {
+    onStepChange?.(STEPS[step].selector);
+
     const measure = () => {
       const el = findVisible(STEPS[step].selector);
       if (!el) {
@@ -79,10 +90,12 @@ export default function GuidedTour({ onDismiss }: Props) {
         setRect({ top: r.top, left: r.left, width: r.width, height: r.height });
       }, 250);
     };
-    measure();
+    // Give the parent's page switch (above) a tick to re-render first,
+    // otherwise this measures the DOM before the target page even mounts.
+    const id = window.setTimeout(measure, 50);
     window.addEventListener('resize', measure);
-    return () => window.removeEventListener('resize', measure);
-  }, [step]);
+    return () => { window.clearTimeout(id); window.removeEventListener('resize', measure); };
+  }, [step, onStepChange]);
 
   // No anchor found (e.g. element not rendered in this view) — skip ahead
   // rather than leaving the tour stuck pointing at nothing.

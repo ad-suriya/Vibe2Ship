@@ -1,7 +1,7 @@
 import React from 'react';
-import { CalendarDays, Target, Repeat, Workflow as WorkflowIcon, LucideIcon } from 'lucide-react';
+import { CalendarDays, LayoutGrid, Target, Repeat, Workflow as WorkflowIcon, LucideIcon } from 'lucide-react';
 
-export type Section = 'plan' | 'goals' | 'habits' | 'workflows';
+export type Section = 'plan' | 'board' | 'goals' | 'habits' | 'workflows';
 
 interface NavItem {
   id: Section;
@@ -11,6 +11,7 @@ interface NavItem {
 
 const NAV_ITEMS: NavItem[] = [
   { id: 'plan', label: 'Plan', icon: CalendarDays },
+  { id: 'board', label: 'Tasks', icon: LayoutGrid },
   { id: 'goals', label: 'Goals', icon: Target },
   { id: 'habits', label: 'Habits', icon: Repeat },
   { id: 'workflows', label: 'Workflows', icon: WorkflowIcon },

@@ -610,11 +610,19 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-[#F5F2ED] text-[#1A1A1A] font-serif flex overflow-x-hidden">
-      {showTutorial && <GuidedTour onDismiss={dismissTutorial} />}
-      <Sidebar active={tab} onSelect={setTab} badges={{ workflows: workflows.length || undefined }} />
+      {showTutorial && (
+        <GuidedTour
+          onDismiss={dismissTutorial}
+          onStepChange={(selector) => {
+            if (selector === '[data-tour="task-toolbar"]' || selector === '[data-tour="nav-board"]') setTab('board');
+            else if (selector === '[data-tour="nav-plan"]') setTab('plan');
+          }}
+        />
+      )}
+      <Sidebar active={tab} onSelect={setTab} badges={{ board: openTasks.length || undefined, workflows: workflows.length || undefined }} />
 
       <div className="flex-grow flex flex-col min-w-0">
-        <Sidebar horizontal active={tab} onSelect={setTab} badges={{ workflows: workflows.length || undefined }} />
+        <Sidebar horizontal active={tab} onSelect={setTab} badges={{ board: openTasks.length || undefined, workflows: workflows.length || undefined }} />
 
         {/* Top bar */}
         <header className="relative z-50 flex flex-col md:flex-row justify-between md:items-center border-b border-[#1A1A1A] bg-white px-4 md:px-6 py-3 gap-3">
@@ -857,9 +865,9 @@ export default function App() {
           )}
           </div>
 
-          {/* Task board + toolbar — breaks out of the max-w-3xl column above
-              to actually use the full screen width. */}
-          {tab === 'plan' && mode !== 'PANIC_MODE' && (
+          {/* Task Board — its own page now, breaking out of the max-w-3xl
+              column above to actually use the full screen width. */}
+          {tab === 'board' && (
           <div className="flex-grow w-full">
             <div data-tour="task-toolbar" className="flex items-center gap-3 border-b border-[#1A1A1A] pb-2 mb-4 flex-wrap">
               <span className="font-sans text-[10px] uppercase tracking-widest font-black">Task Board</span>
