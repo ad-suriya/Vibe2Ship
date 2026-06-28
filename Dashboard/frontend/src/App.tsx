@@ -609,7 +609,7 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen bg-[#F5F2ED] text-[#1A1A1A] font-serif flex overflow-x-hidden">
+    <div className="h-screen bg-[#F5F2ED] text-[#1A1A1A] font-serif flex overflow-hidden">
       {showTutorial && (
         <GuidedTour
           onDismiss={dismissTutorial}
@@ -621,7 +621,7 @@ export default function App() {
       )}
       <Sidebar active={tab} onSelect={setTab} badges={{ board: openTasks.length || undefined, workflows: workflows.length || undefined }} />
 
-      <div className="flex-grow flex flex-col min-w-0">
+      <div className="flex-grow flex flex-col min-w-0 h-full">
         <Sidebar horizontal active={tab} onSelect={setTab} badges={{ board: openTasks.length || undefined, workflows: workflows.length || undefined }} />
 
         {/* Top bar */}
@@ -681,7 +681,7 @@ export default function App() {
       {/* Row: main content + chat panel as real flex siblings, so opening
           chat shrinks the content column instead of covering it. */}
       <div className="flex-grow flex flex-row min-h-0 overflow-hidden">
-      <div className="flex-grow flex flex-col justify-between min-w-0 overflow-y-auto">
+      <div className="flex-grow flex flex-col justify-between min-w-0 min-h-0 overflow-y-auto">
       <main className="w-full flex flex-col gap-5 p-4 md:p-8">
           {/* Capped at a readable width — only the Task Board below breaks
               out to fill the screen, everything above it reads better narrow. */}
