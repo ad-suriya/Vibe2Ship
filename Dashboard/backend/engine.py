@@ -139,8 +139,17 @@ def _get_client() -> genai.Client:
     return _client
 
 
+def is_quota_exhausted(err: Exception) -> bool:
+    """A daily/monthly quota cap, not a momentary blip — retrying in seconds
+    or minutes won't help; it only resets on Google's billing cycle boundary."""
+    msg = str(err).lower()
+    return "resource_exhausted" in msg and ("per day" in msg or "perday" in msg)
+
+
 def is_transient(err: Exception) -> bool:
     msg = str(err).lower()
+    if is_quota_exhausted(err):
+        return False
     return any(n in msg for n in ("503", "unavailable", "429", "resource_exhausted", "overloaded", "high demand"))
 
 
@@ -159,6 +168,7 @@ def _generate(contents, system_instruction, schema, max_attempts: int = 4):
             )
         except Exception as err:  # noqa: BLE001
             last_err = err
+            print(f"[engine] Gemini call failed (attempt {attempt}/{max_attempts}): {err!r}")
             if not is_transient(err) or attempt == max_attempts:
                 break
             time.sleep(0.5 * (2 ** (attempt - 1)))

@@ -351,6 +351,9 @@ def chat(req: ChatRequest, user: dict = Depends(get_current_user)) -> ChatRespon
     try:
         result = engine.chat(req.message, [t.model_dump() for t in req.history], now=now, busy=busy)
     except Exception as err:  # noqa: BLE001
+        print(f"[chat] Gemini call failed: {err!r}")
+        if engine.is_quota_exhausted(err):
+            raise HTTPException(status_code=429, detail="Daily AI quota reached for this API key — try again tomorrow, or upgrade the Gemini API plan for a higher limit.")
         if engine.is_transient(err):
             raise HTTPException(status_code=503, detail="The AI model is busy. Try again in a moment.")
         raise HTTPException(status_code=500, detail=str(err))
@@ -813,6 +816,9 @@ def generate_workflow_draft(body: WorkflowGenerateRequest, user: dict = Depends(
     try:
         plan = engine.generate_workflow(body.sop_text)
     except Exception as err:  # noqa: BLE001
+        print(f"[workflows/generate] Gemini call failed: {err!r}")
+        if engine.is_quota_exhausted(err):
+            raise HTTPException(status_code=429, detail="Daily AI quota reached for this API key — try again tomorrow, or upgrade the Gemini API plan for a higher limit.")
         if engine.is_transient(err):
             raise HTTPException(status_code=503, detail="The AI model is busy. Try again in a moment.")
         raise HTTPException(status_code=500, detail=str(err))
