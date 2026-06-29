@@ -31,12 +31,16 @@ const ALWAYS_ALLOWED_HOSTNAMES = new Set(
   [hostnameOf(FRONTEND_URL), hostnameOf(API_BASE), 'accounts.google.com'].filter(Boolean),
 );
 
-const normalizeUrl = (url: string): string => hostnameOf(url) || url;
-
 const isSiteBlocked = (url: string): boolean => {
   if (!blockingState.isActive) return false;
 
-  const normalized = normalizeUrl(url);
+  // A URL with no extractable hostname (relative/malformed) can never equal
+  // an exemption or the allowed site — in allowlist mode that's "always
+  // blocked" by construction, the wrong fail direction for something that
+  // can trap a user out of their own login flow. Fail open instead: if we
+  // can't tell what this is, don't trap it.
+  const normalized = hostnameOf(url);
+  if (!normalized) return false;
   if (ALWAYS_ALLOWED_HOSTNAMES.has(normalized)) return false;
 
   const overrideExpiry = blockingState.overrideUntil[normalized];
@@ -97,11 +101,18 @@ export const setupFocusBlocking = (): void => {
       const link = target.closest('a');
 
       if (link?.href) {
-        const href = link.getAttribute('href');
-        if (href && isSiteBlocked(href)) {
+        // `link.href` is the resolved IDL property (always absolute, e.g.
+        // "https://host/api/...") — `getAttribute('href')` would return the
+        // raw markup instead, which for a same-origin relative link (e.g.
+        // "/api/auth/google/login", exactly what the dashboard's login
+        // button uses) is relative and has no hostname to check at all.
+        // new URL() on that throws, isSiteBlocked's catch swallowed it to
+        // '', which matched neither the allowlist nor the exemption set —
+        // so it got blocked instead of correctly exempted.
+        if (isSiteBlocked(link.href)) {
           event.preventDefault();
           event.stopPropagation();
-          handleNavigation(href);
+          handleNavigation(link.href);
         }
       }
     }
