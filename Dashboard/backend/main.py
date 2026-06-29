@@ -383,7 +383,13 @@ def chat(req: ChatRequest, user: dict = Depends(get_current_user)) -> ChatRespon
 
     now = datetime.now()
     busy = _calendar_busy_window(user["id"], now)
-    memory_facts = [f["fact"] for f in db.get_memory_facts(user["id"])]
+    # Retrieval, not a blanket dump: only the facts relevant to THIS message
+    # get injected (see memory.retrieve_relevant_facts — fast keyword
+    # overlap, no extra AI call), so the prompt doesn't grow with every fact
+    # ever learned and "I missed frontend" doesn't drag in unrelated facts
+    # about, say, weekend habits.
+    relevant_facts = memory.retrieve_relevant_facts(req.message, db.get_memory_facts(user["id"]))
+    memory_facts = [f["fact"] for f in relevant_facts]
     open_tasks = [_with_risk(t, now) for t in db.list_tasks(user["id"]) if t.get("status") not in ("COMPLETED", "ARCHIVED")]  # noqa: F821 (defined below, same module)
     try:
         result = engine.chat(req.message, [t.model_dump() for t in req.history], now=now, busy=busy,

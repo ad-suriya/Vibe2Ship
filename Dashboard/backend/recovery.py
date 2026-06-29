@@ -7,85 +7,16 @@ finds the nearest real free time, and greedily redistributes the work into
 it. Anything that depends on the moved task (db.py's `dependencies`) gets
 cascaded automatically, so "backend depends on frontend" means backend's
 slot shifts the moment frontend's does.
+
+Free-slot finding/chunking lives in scheduler.py (build_schedule's
+dependency-aware engine uses the exact same functions) — this module only
+adds the seed-task-plus-cascade traversal on top.
 """
 
-from datetime import datetime, timedelta
-from typing import Optional
+from datetime import datetime
 
 import scheduler
-
-FREE_SLOT_HORIZON_DAYS = 7
-
-
-def _push_past_busy(cursor: datetime, busy: list[tuple[datetime, datetime]]) -> datetime:
-    """scheduler._next_free_slot only resolves ONE overlapping busy window
-    per call — if two windows are back-to-back (e.g. a just-recovered task's
-    new block ends exactly when another task's block begins), a single call
-    can land the cursor exactly on the next window's start without seeing
-    it. Loop to a fixed point so the cursor is never inside (or sitting on
-    the start of) any busy window in the same pass."""
-    moved = True
-    while moved:
-        moved = False
-        for start, end in busy:
-            if start <= cursor < end:
-                cursor = end
-                moved = True
-    return cursor
-
-
-def find_free_slots(now: datetime, busy: list[tuple[datetime, datetime]],
-                     horizon_days: int = FREE_SLOT_HORIZON_DAYS) -> list[dict]:
-    """Working-hours gaps between `busy` windows (calendar events + other
-    tasks' scheduled blocks), from `now` out to `horizon_days`:
-    [{"start": dt, "end": dt, "free_hours": float}, ...], nearest first."""
-    busy = sorted(busy)
-    horizon_end = now + timedelta(days=horizon_days)
-    cursor = scheduler._next_work_slot(now.replace(second=0, microsecond=0))
-    slots: list[dict] = []
-
-    for _ in range(2000):  # generous bound; a real horizon never needs this many hops
-        if cursor >= horizon_end:
-            break
-        cursor = scheduler._next_work_slot(cursor)
-        cursor = _push_past_busy(cursor, busy)
-        cursor = scheduler._next_work_slot(cursor)
-        day_end = cursor.replace(hour=scheduler.WORK_END_HOUR, minute=0, second=0, microsecond=0)
-        if cursor >= day_end:
-            cursor = scheduler._next_work_slot(day_end)
-            continue
-        upcoming = [b_start for b_start, _ in busy if cursor < b_start < day_end]
-        slot_end = min([day_end, *upcoming])
-        if slot_end > cursor:
-            slots.append({
-                "start": cursor, "end": slot_end,
-                "free_hours": round((slot_end - cursor).total_seconds() / 3600, 2),
-            })
-        cursor = slot_end
-    return slots
-
-
-def _consume_slots(slots: list[dict], minutes_needed: int) -> list[dict]:
-    """Greedily eats from the front of `slots` (nearest first) until
-    `minutes_needed` is covered — split across slots/days using the same
-    MAX_BLOCK_MINUTES focus-block chunking as the main scheduler."""
-    chunks: list[dict] = []
-    remaining = minutes_needed
-    for slot in slots:
-        if remaining <= 0:
-            break
-        cursor, slot_end = slot["start"], slot["end"]
-        while remaining > 0 and cursor < slot_end:
-            minutes_left = int((slot_end - cursor).total_seconds() // 60)
-            chunk = min(remaining, scheduler.MAX_BLOCK_MINUTES, minutes_left)
-            if chunk <= 0:
-                break
-            start = cursor
-            end = start + timedelta(minutes=chunk)
-            chunks.append({"start": start, "end": end})
-            remaining -= chunk
-            cursor = end + timedelta(minutes=scheduler.BREAK_MINUTES)
-    return chunks
+from scheduler import find_free_slots, pack_chunks
 
 
 def _day_label(dt: datetime, now: datetime) -> str:
@@ -154,7 +85,7 @@ def recover(seed_tasks: list[dict], all_tasks: list[dict], now: datetime,
             return
 
         slots = find_free_slots(max(now, earliest), others_occupied())
-        chunks = _consume_slots(slots, remaining)
+        chunks = pack_chunks(slots, remaining)
         if not chunks:
             return
 

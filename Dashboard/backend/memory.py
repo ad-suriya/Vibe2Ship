@@ -16,6 +16,7 @@ That separation is what guarantees "do not store raw full chat": the AI
 summarizer's input is a handful of percentages, nothing else.
 """
 
+import re
 from datetime import datetime
 from typing import Optional
 
@@ -24,6 +25,12 @@ TIME_BUCKETS = [
 ]
 
 MIN_EVENTS_TO_SUMMARIZE = 6
+DEFAULT_TOP_N = 3
+
+_STOPWORDS = {
+    "i", "a", "an", "the", "to", "of", "in", "on", "at", "for", "and", "or", "is", "are",
+    "was", "were", "be", "my", "this", "that", "it", "with", "you", "your", "me", "have",
+}
 
 
 def _parse(dt: Optional[str]) -> Optional[datetime]:
@@ -116,3 +123,41 @@ def render_stats(stats: dict) -> str:
             f"out of {total} (skip rate {round(rates['skip_rate'] * 100)}%)."
         )
     return "\n".join(lines)
+
+
+# --- Retrieval: pick the facts relevant to THIS message, before the chat
+# call goes out, instead of always injecting the user's entire fact list. ---
+def _stem(word: str) -> str:
+    # Light suffix-stripping, not a real stemmer — just enough to match
+    # "missed"/"misses"/"missing" to the same root without a dependency.
+    for suffix in ("ing", "ed", "es", "s"):
+        if word.endswith(suffix) and len(word) - len(suffix) >= 3:
+            return word[: -len(suffix)]
+    return word
+
+
+def _keywords(text: str) -> set[str]:
+    words = re.findall(r"[a-z]+", text.lower())
+    return {_stem(w) for w in words if w not in _STOPWORDS and len(w) > 2}
+
+
+def retrieve_relevant_facts(message: str, facts: list[dict], top_n: int = DEFAULT_TOP_N) -> list[dict]:
+    """Fast keyword-overlap retrieval — no embeddings, no extra AI call.
+    Scores each stored fact by how many (lightly-stemmed) keywords it shares
+    with the message, returns the top `top_n` with at least one match.
+    "I missed frontend" -> {"miss", "frontend"} matches both "User misses
+    evening tasks" (shares "miss") and "Frontend tasks take 1.5x longer"
+    (shares "frontend"), in O(facts) time with no network call."""
+    if not facts:
+        return []
+    message_kw = _keywords(message)
+    if not message_kw:
+        return []
+
+    scored = []
+    for fact in facts:
+        overlap = len(message_kw & _keywords(fact["fact"]))
+        if overlap > 0:
+            scored.append((overlap, fact))
+    scored.sort(key=lambda pair: pair[0], reverse=True)
+    return [fact for _, fact in scored[:top_n]]
