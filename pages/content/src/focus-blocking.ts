@@ -1,4 +1,4 @@
-import { blockingStorage, FRONTEND_URL } from '@extension/storage';
+import { blockingStorage, FRONTEND_URL, API_BASE } from '@extension/storage';
 import type { BlockingState } from '@extension/storage';
 
 let blockingState: BlockingState = {
@@ -9,31 +9,35 @@ let blockingState: BlockingState = {
   overrideUntil: {},
 };
 
-// The dashboard itself must always be reachable while locked to a captured
-// task's site — otherwise there'd be no way to see progress, log hours, or
-// stop the lock without going through the popup specifically.
-const DASHBOARD_HOSTNAME = (() => {
+const hostnameOf = (url: string): string => {
   try {
-    return new URL(FRONTEND_URL).hostname.replace(/^www\./, '');
+    return new URL(url).hostname.replace(/^www\./, '');
   } catch {
     return '';
   }
-})();
-
-const normalizeUrl = (url: string): string => {
-  try {
-    const parsed = new URL(url);
-    return parsed.hostname.replace(/^www\./, '');
-  } catch {
-    return url;
-  }
 };
+
+// These must always be reachable no matter what's locked/blocked, or the
+// lock can brick its own escape hatch:
+// - the dashboard itself — otherwise there's no way to see progress, log
+//   hours, or stop the lock without going through the popup specifically.
+// - the BACKEND's origin — login is a real page navigation to
+//   /api/auth/google/login (a 307 to Google, which then redirects back),
+//   not an XHR, so the content script sees it as a normal navigation and
+//   blocked it just like any other site. Missing this exemption meant a
+//   locked-but-logged-out user couldn't even log back in to unlock.
+// - accounts.google.com — the OAuth consent screen itself, mid-redirect.
+const ALWAYS_ALLOWED_HOSTNAMES = new Set(
+  [hostnameOf(FRONTEND_URL), hostnameOf(API_BASE), 'accounts.google.com'].filter(Boolean),
+);
+
+const normalizeUrl = (url: string): string => hostnameOf(url) || url;
 
 const isSiteBlocked = (url: string): boolean => {
   if (!blockingState.isActive) return false;
 
   const normalized = normalizeUrl(url);
-  if (normalized === DASHBOARD_HOSTNAME) return false;
+  if (ALWAYS_ALLOWED_HOSTNAMES.has(normalized)) return false;
 
   const overrideExpiry = blockingState.overrideUntil[normalized];
   if (overrideExpiry && overrideExpiry > Date.now()) return false;
