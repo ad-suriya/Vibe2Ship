@@ -1,7 +1,15 @@
 import { useEffect, useState } from 'react';
 import { useStorage, withErrorBoundary, withSuspense } from '@extension/shared';
-import { exampleThemeStorage, tasksStorage } from '@extension/storage';
+import { exampleThemeStorage, tasksStorage, blockingStorage, focusSessionStorage } from '@extension/storage';
 import { cn, LoadingSpinner, ErrorDisplay } from '@extension/ui';
+
+const hostnameOf = (url: string): string | null => {
+  try {
+    return new URL(url).hostname.replace(/^www\./, '');
+  } catch {
+    return null;
+  }
+};
 
 interface PageContext {
   title?: string;
@@ -32,6 +40,11 @@ function TaskCaptureContent() {
   const [isLoading, setIsLoading] = useState(false);
   const [success, setSuccess] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Defaults on: capturing a task FROM a page is itself a signal you want
+  // to stay on it — but stays an explicit, visible checkbox since locking
+  // the browser to one site is disruptive if you didn't mean to.
+  const [lockSite, setLockSite] = useState(true);
+  const lockHostname = context.url ? hostnameOf(context.url) : null;
 
   useEffect(() => {
     const getPageContext = async () => {
@@ -100,6 +113,15 @@ function TaskCaptureContent() {
 
     try {
       await createTaskOnDashboard(taskName.trim(), description.trim(), context.url, context.selectedText);
+
+      if (lockSite && lockHostname) {
+        // Pin a focus session to this task so the lock screen's timer/"+5
+        // min" has something real to act on, then lock the browser to the
+        // captured site — mirrors the popup's "Focus on this task" flow.
+        await focusSessionStorage.startTracking({ description: taskName.trim() });
+        await blockingStorage.lockToSite(lockHostname);
+      }
+
       setSuccess(true);
 
       setTimeout(() => {
@@ -117,6 +139,7 @@ function TaskCaptureContent() {
       <div className="mx-auto max-w-2xl">
         <div className="space-y-6">
           <div>
+            <img src={chrome.runtime.getURL('icon-128.png')} alt="" className="h-9 w-9 mb-2" />
             <h1 className={cn('font-serif italic font-black text-3xl', isLight ? 'text-ink' : 'text-paper')}>
               Capture Task
             </h1>
@@ -132,6 +155,22 @@ function TaskCaptureContent() {
               </p>
               <p className={cn('mt-1 truncate font-semibold', isLight ? 'text-ink' : 'text-paper')}>{context.title}</p>
               <p className={cn('mt-1 truncate text-xs', isLight ? 'text-ink/50' : 'text-paper/50')}>{context.url}</p>
+
+              {lockHostname && (
+                <label className={cn('mt-3 flex items-start gap-2 text-xs', isLight ? 'text-ink/80' : 'text-paper/80')}>
+                  <input
+                    type="checkbox"
+                    checked={lockSite}
+                    onChange={e => setLockSite(e.target.checked)}
+                    disabled={isLoading}
+                    className="mt-0.5"
+                  />
+                  <span>
+                    Lock my browser to <strong>{lockHostname}</strong> until I finish this task — every other site
+                    gets blocked.
+                  </span>
+                </label>
+              )}
             </div>
           )}
 
@@ -155,7 +194,7 @@ function TaskCaptureContent() {
                   Task Created!
                 </h2>
                 <p className={cn('mt-1 text-xs uppercase tracking-widest', isLight ? 'text-ink/60' : 'text-paper/60')}>
-                  Added to Dashboard
+                  {lockSite && lockHostname ? `Locked to ${lockHostname} — unlock anytime from the popup` : 'Added to Dashboard'}
                 </p>
               </div>
             ) : (

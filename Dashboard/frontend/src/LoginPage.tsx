@@ -17,9 +17,10 @@ export const LoginPage: React.FC<LoginPageProps> = ({ authError }) => {
       <div className="w-full max-w-md space-y-12">
         {/* Branding */}
         <div className="text-center space-y-3">
-          <div className="text-5xl font-black italic">Anxiety, into Action.</div>
+          <img src="/logo-mark.png" alt="Task Weave" className="h-16 w-16 mx-auto" />
+          <div className="text-5xl font-black italic">Remember. Connect. Execute.</div>
           <p className="font-sans text-sm opacity-60">
-            Your personal AI productivity coach. Turn anxiety into a battle plan in seconds.
+            Your personal AI productivity coach. Remember what matters, connect it to a plan, execute without delay.
           </p>
         </div>
 

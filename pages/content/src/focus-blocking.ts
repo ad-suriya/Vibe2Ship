@@ -1,11 +1,24 @@
-import { blockingStorage } from '@extension/storage';
+import { blockingStorage, FRONTEND_URL } from '@extension/storage';
 import type { BlockingState } from '@extension/storage';
 
 let blockingState: BlockingState = {
   isActive: false,
+  mode: 'blocklist',
   blockedSites: [],
+  allowedSite: null,
   overrideUntil: {},
 };
+
+// The dashboard itself must always be reachable while locked to a captured
+// task's site — otherwise there'd be no way to see progress, log hours, or
+// stop the lock without going through the popup specifically.
+const DASHBOARD_HOSTNAME = (() => {
+  try {
+    return new URL(FRONTEND_URL).hostname.replace(/^www\./, '');
+  } catch {
+    return '';
+  }
+})();
 
 const normalizeUrl = (url: string): string => {
   try {
@@ -20,8 +33,17 @@ const isSiteBlocked = (url: string): boolean => {
   if (!blockingState.isActive) return false;
 
   const normalized = normalizeUrl(url);
+  if (normalized === DASHBOARD_HOSTNAME) return false;
+
   const overrideExpiry = blockingState.overrideUntil[normalized];
   if (overrideExpiry && overrideExpiry > Date.now()) return false;
+
+  if (blockingState.mode === 'allowlist') {
+    // Task-capture site lock: only the one locked site is reachable —
+    // everything else (the inverse of the blocklist check below) is blocked.
+    if (!blockingState.allowedSite) return false;
+    return normalized !== blockingState.allowedSite;
+  }
 
   return blockingState.blockedSites.some(site => {
     const normalizedSite = site.replace(/^www\./, '');

@@ -8,12 +8,16 @@ const FocusLock: React.FC = () => {
   const [blockedUrl, setBlockedUrl] = useState('');
   const [timeLeft, setTimeLeft] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
+  const [allowedSite, setAllowedSite] = useState<string | null>(null);
 
   useEffect(() => {
     const init = async () => {
       const params = new URLSearchParams(window.location.search);
       const url = params.get('url') || window.location.href;
       setBlockedUrl(url);
+
+      const blocking = await blockingStorage.get();
+      setAllowedSite(blocking.mode === 'allowlist' ? blocking.allowedSite : null);
 
       // Best-effort: pull the real session for the countdown / "+5 min".
       // This hits the backend and needs a still-valid auth token (~1hr
@@ -87,6 +91,7 @@ const FocusLock: React.FC = () => {
       focusTimeLeft={timeLeft}
       onOverride={handleOverride}
       onFocusMore={handleFocusMore}
+      allowedSite={allowedSite}
     />
   );
 };

@@ -40,6 +40,7 @@ const manifest = {
     default_popup: 'popup/index.html',
     default_icon: 'icon-34.png',
   },
+  options_page: 'options/index.html',
   commands: {
     'capture-task': {
       suggested_key: { default: 'Ctrl+Shift+Y', mac: 'Command+Shift+Y' },
@@ -47,6 +48,8 @@ const manifest = {
     },
   },
   icons: {
+    '16': 'icon-16.png',
+    '48': 'icon-48.png',
     '128': 'icon-128.png',
   },
   content_scripts: [

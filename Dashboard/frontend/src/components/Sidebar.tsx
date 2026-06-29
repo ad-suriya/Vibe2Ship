@@ -51,8 +51,11 @@ export default function Sidebar({ active, onSelect, badges = {}, horizontal = fa
   return (
     <nav className="hidden lg:flex flex-col w-56 shrink-0 border-r border-[#1A1A1A] bg-white h-screen sticky top-0">
       <div className="px-5 py-6 border-b border-[#1A1A1A]">
-        <span className="font-sans text-[9px] uppercase tracking-widest font-bold opacity-60 block mb-1">Task Weave</span>
-        <h1 className="text-2xl font-black italic tracking-tight leading-none font-serif">Anxiety,<br />into Action.</h1>
+        <div className="flex items-center gap-2 mb-1">
+          <img src="/logo-mark.png" alt="" className="h-5 w-5" />
+          <span className="font-sans text-[9px] uppercase tracking-widest font-bold opacity-60">Task Weave</span>
+        </div>
+        <h1 className="text-2xl font-black italic tracking-tight leading-none font-serif">Remember.<br />Connect. Execute.</h1>
       </div>
 
       <div className="flex flex-col gap-1 p-3 flex-grow">

@@ -10,6 +10,7 @@ function Popup() {
   const { isLight } = useStorage(exampleThemeStorage);
   const { isAuthenticated } = useStorage(authStorage);
   const blockedSites = useStorage(blockedSitesStorage);
+  const blockingState = useStorage(blockingStorage);
   const [session, setSession] = useState<FocusSession | null>(null);
   const [description, setDescription] = useState('');
   const [todayTotal, setTodayTotal] = useState(0);
@@ -235,6 +236,12 @@ function Popup() {
       className={cn('w-full flex flex-col p-4 gap-4 font-sans', isLight ? 'bg-paper text-ink' : 'bg-ink text-paper')}
       style={{ width: '380px' }}
     >
+      {/* Branding */}
+      <div className="flex items-center gap-2">
+        <img src={chrome.runtime.getURL('icon-128.png')} alt="" className="h-5 w-5" />
+        <span className="text-[10px] uppercase tracking-widest font-bold opacity-60">Task Weave</span>
+      </div>
+
       {/* Time Totals */}
       <div className="flex gap-3 text-center">
         <div className={cn('flex-1 border py-2', isLight ? 'border-ink/15' : 'border-paper/20')}>
@@ -246,6 +253,25 @@ function Popup() {
           <p className="font-serif font-black text-2xl">{formatMs(weekTotal)}</p>
         </div>
       </div>
+
+      {/* Task-capture site lock — distinct from the blocklist below: instead
+          of blocking a few distracting sites, ONLY this one is reachable. */}
+      {blockingState.isActive && blockingState.mode === 'allowlist' && blockingState.allowedSite && (
+        <div className={cn('flex items-center justify-between gap-2 border p-3', isLight ? 'border-ink bg-[#F5F2ED]' : 'border-paper bg-[#222]')}>
+          <p className="text-xs" title="Every other site is blocked until you finish this task or hit Unlock — set from the capture popup's lock checkbox.">
+            🔒 Locked to <strong>{blockingState.allowedSite}</strong>
+          </p>
+          <button
+            onClick={handleStop}
+            className={cn(
+              'px-2 py-1 text-[10px] uppercase tracking-widest font-bold border shrink-0',
+              isLight ? 'border-ink hover:bg-ink hover:text-paper' : 'border-paper hover:bg-paper hover:text-ink',
+            )}
+          >
+            Unlock
+          </button>
+        </div>
+      )}
 
       {/* Time Tracker */}
       <TimeTracker session={session} description={description} onDescriptionChange={setDescription} onStart={handleStart} onStop={handleStop} />
@@ -328,6 +354,7 @@ function Popup() {
       <div className={cn('border-t pt-3 flex flex-col gap-2', isLight ? 'border-ink/15' : 'border-paper/20')}>
         <button
           onClick={() => setShowBlocklist(s => !s)}
+          title="Any focus session you start blocks these sites — edit the list anytime, even mid-session."
           className="flex items-center justify-between text-[10px] uppercase tracking-widest font-bold opacity-60"
         >
           <span>Blocked Sites During Focus ({blockedSites.length})</span>
@@ -400,6 +427,17 @@ function Popup() {
           )}
         >
           Dashboard
+        </button>
+        <button
+          onClick={() => chrome.runtime.openOptionsPage()}
+          title="How this extension works"
+          aria-label="How this extension works"
+          className={cn(
+            'w-8 py-2 text-xs font-bold border transition-colors shrink-0',
+            isLight ? 'border-ink hover:bg-ink hover:text-paper' : 'border-paper hover:bg-paper hover:text-ink',
+          )}
+        >
+          ?
         </button>
         <button
           onClick={handleLogout}

@@ -11,12 +11,20 @@ exampleThemeStorage.get().then(theme => {
 // popup first.
 const CAPTURE_MENU_ID = 'task-weave-capture';
 
-chrome.runtime.onInstalled.addListener(() => {
+chrome.runtime.onInstalled.addListener(details => {
   chrome.contextMenus.create({
     id: CAPTURE_MENU_ID,
     title: 'Add to Task Weave',
     contexts: ['page', 'selection', 'link'],
   });
+
+  // First install only — not on every update/reload during dev, and not
+  // every time someone reloads the unpacked extension. The options page
+  // explains capture, focus sessions, and site-locking; reachable again
+  // anytime via the popup's "How it works" link or right-click → Options.
+  if (details.reason === 'install') {
+    chrome.runtime.openOptionsPage();
+  }
 });
 
 function openCapture(tab?: chrome.tabs.Tab, selectedText?: string): void {

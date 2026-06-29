@@ -6,6 +6,10 @@ export interface FocusBlockerProps {
   focusTimeLeft: number;
   onOverride?: () => void;
   onFocusMore?: () => void;
+  // Task-capture site lock: when set, only `allowedSite` is reachable —
+  // the heading/subtext flip to explain that instead of the generic
+  // "this specific site is blocked" blocklist framing.
+  allowedSite?: string | null;
 }
 
 export const FocusBlocker: React.FC<FocusBlockerProps> = ({
@@ -13,6 +17,7 @@ export const FocusBlocker: React.FC<FocusBlockerProps> = ({
   focusTimeLeft,
   onOverride,
   onFocusMore,
+  allowedSite,
 }) => {
   const [countdownLeft, setCountdownLeft] = useState(5);
 
@@ -44,11 +49,21 @@ export const FocusBlocker: React.FC<FocusBlockerProps> = ({
 
         <div>
           <h1 className="text-3xl font-bold text-gray-900 dark:text-white">
-            You started a focus session. Finish first.
+            {allowedSite ? "You're locked to your task's site." : 'You started a focus session. Finish first.'}
           </h1>
           <p className="mt-2 text-gray-600 dark:text-gray-400">
-            <span className="font-semibold text-lg">{getDomainFromUrl(blockedUrl)}</span> is
-            blocked until your session ends.
+            {allowedSite ? (
+              <>
+                Only <span className="font-semibold text-lg">{allowedSite}</span> is reachable right now —{' '}
+                <span className="font-semibold text-lg">{getDomainFromUrl(blockedUrl)}</span> is off-limits until you
+                finish or unlock from the popup.
+              </>
+            ) : (
+              <>
+                <span className="font-semibold text-lg">{getDomainFromUrl(blockedUrl)}</span> is blocked until your
+                session ends.
+              </>
+            )}
           </p>
         </div>
 
