@@ -24,6 +24,7 @@ import PanicPanel from './components/PanicPanel';
 import SearchBar from './components/SearchBar';
 import GuidedTour from './components/GuidedTour';
 import NotificationPrompt from './components/NotificationPrompt';
+import ExtensionPrompt from './components/ExtensionPrompt';
 import WorkflowsPanel from './components/WorkflowsPanel';
 import DecomposePanel from './components/DecomposePanel';
 import MemoryPanel from './components/MemoryPanel';
@@ -124,6 +125,7 @@ export default function App() {
   const [chatOpen, setChatOpen] = useState(true);
   const [showTutorial, setShowTutorial] = useState(false);
   const [showNotifPrompt, setShowNotifPrompt] = useState(false);
+  const [showExtensionPrompt, setShowExtensionPrompt] = useState(false);
 
   const [calendarConnected, setCalendarConnected] = useState(false);
   const [calendarBusy, setCalendarBusy] = useState(false);
@@ -300,6 +302,12 @@ export default function App() {
   const dismissTutorial = () => {
     localStorage.setItem('tutorialSeen', '1');
     setShowTutorial(false);
+    if (!localStorage.getItem('extensionPromptSeen')) setShowExtensionPrompt(true);
+  };
+
+  const dismissExtensionPrompt = () => {
+    localStorage.setItem('extensionPromptSeen', '1');
+    setShowExtensionPrompt(false);
   };
 
   const enableNotifications = async () => {
@@ -776,6 +784,7 @@ export default function App() {
           }}
         />
       )}
+      {showExtensionPrompt && <ExtensionPrompt onDismiss={dismissExtensionPrompt} />}
       <Sidebar active={tab} onSelect={setTab} badges={{ board: openTasks.length || undefined, workflows: workflows.length || undefined }} />
 
       <div className="flex-grow flex flex-col min-w-0 h-full">
