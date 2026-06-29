@@ -1,13 +1,19 @@
 import {
   ChatResponse,
+  ChatSession,
+  DecompositionPlan,
+  FreeSlot,
   Goal,
   Habit,
+  MemoryFact,
+  RecoveryResult,
   Reminder,
   RescheduleResult,
   ScheduleResult,
   SearchResults,
   Session,
   StatusInfo,
+  SubtaskDraft,
   Task,
   Urgency,
   Workflow,
@@ -67,6 +73,16 @@ export const api = {
       body: JSON.stringify({ message, history }),
     }).then(handle<ChatResponse>),
 
+  // Persisted chat session (Firestore-backed), keyed by a client-generated id.
+  getChatSession: (sessionId: string) =>
+    fetch(`/api/chats/${sessionId}`, { headers: authHeaders() }).then(handle<ChatSession>),
+  addChatMessage: (sessionId: string, role: 'user' | 'model', content: string) =>
+    fetch(`/api/chats/${sessionId}/messages`, {
+      method: 'POST',
+      headers: jsonHeaders(),
+      body: JSON.stringify({ role, content }),
+    }).then(handle<ChatSession>),
+
   createTask: (body: NewTask) =>
     fetch('/api/tasks', {
       method: 'POST',
@@ -89,6 +105,16 @@ export const api = {
   reschedule: () => fetch('/api/reschedule', { method: 'POST', headers: authHeaders() }).then(handle<RescheduleResult>),
 
   status: () => fetch('/api/status', { headers: authHeaders() }).then(handle<StatusInfo>),
+
+  // Automatic task recovery
+  skipTask: (id: number) => fetch(`/api/tasks/${id}/skip`, { method: 'POST', headers: authHeaders() }).then(handle<RecoveryResult>),
+  recoverMissedTasks: (taskIds: number[] = []) =>
+    fetch('/api/tasks/recover', { method: 'POST', headers: jsonHeaders(), body: JSON.stringify({ task_ids: taskIds }) }).then(handle<RecoveryResult>),
+  freeSlots: () => fetch('/api/tasks/free-slots', { headers: authHeaders() }).then(handle<FreeSlot[]>),
+
+  // Long-term behavioral memory
+  getMemory: () => fetch('/api/memory', { headers: authHeaders() }).then(handle<MemoryFact[]>),
+  summarizeMemory: () => fetch('/api/memory/summarize', { method: 'POST', headers: authHeaders() }).then(handle<MemoryFact[]>),
 
   taskIcsUrl: (id: number) => `/api/tasks/${id}.ics`,
   calendarIcsUrl: () => '/api/calendar.ics',
@@ -147,4 +173,10 @@ export const api = {
     fetch(`/api/workflows/${id}`, { method: 'PATCH', headers: jsonHeaders(), body: JSON.stringify(body) }).then(handle<Workflow>),
   deleteWorkflow: (id: number) => fetch(`/api/workflows/${id}`, { method: 'DELETE', headers: authHeaders() }).then(handle<{ deleted: number }>),
   runWorkflow: (id: number) => fetch(`/api/workflows/${id}/run`, { method: 'POST', headers: authHeaders() }).then(handle<{ created: Task[] }>),
+
+  // AI Task Decomposition
+  decomposeGoal: (goal: string) =>
+    fetch('/api/tasks/decompose', { method: 'POST', headers: jsonHeaders(), body: JSON.stringify({ goal }) }).then(handle<DecompositionPlan>),
+  commitDecomposition: (goal: string, subtasks: SubtaskDraft[]) =>
+    fetch('/api/tasks/decompose/commit', { method: 'POST', headers: jsonHeaders(), body: JSON.stringify({ goal, subtasks }) }).then(handle<Task[]>),
 };

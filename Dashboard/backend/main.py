@@ -38,7 +38,10 @@ import calendar_sync
 import engine
 import habits as habits_mod
 import ics
+import memory
+import recovery
 import reminders as reminders_mod
+import risk
 import scheduler
 import search as search_mod
 
@@ -85,16 +88,23 @@ class ChatResponse(BaseModel):
     tasks: List[dict]
 
 
+class ChatMessageCreate(BaseModel):
+    role: str
+    content: str
+
+
 class TaskCreate(BaseModel):
     task_name: str
     urgency: engine.Urgency = engine.Urgency.MEDIUM
     estimated_minutes: int = 30
+    completed_minutes: int = 0
     deadline: Optional[str] = None
     next_micro_step: str = ""
     goal_id: Optional[int] = None
     url: Optional[str] = None
     selected_text: Optional[str] = None
     tags: List[str] = []
+    dependencies: List[int] = []
 
 
 class TaskPatch(BaseModel):
@@ -102,12 +112,37 @@ class TaskPatch(BaseModel):
     status: Optional[engine.Status] = None
     urgency: Optional[engine.Urgency] = None
     estimated_minutes: Optional[int] = None
+    completed_minutes: Optional[int] = None
     deadline: Optional[str] = None
     next_micro_step: Optional[str] = None
     goal_id: Optional[int] = None
     url: Optional[str] = None
     selected_text: Optional[str] = None
     tags: Optional[List[str]] = None
+    dependencies: Optional[List[int]] = None
+
+
+class RecoverRequest(BaseModel):
+    # Specific tasks to recover (explicit skip / inactivity triggers). Empty
+    # means "auto-detect" — recover whatever's missed right now.
+    task_ids: List[int] = []
+
+
+class DecomposeRequest(BaseModel):
+    goal: str
+
+
+class SubtaskIn(BaseModel):
+    id: str
+    title: str
+    estimated_hours: float
+    priority: engine.Urgency = engine.Urgency.MEDIUM
+    depends_on: List[str] = []
+
+
+class DecomposeCommitRequest(BaseModel):
+    goal: str
+    subtasks: List[SubtaskIn]
 
 
 class ReminderCreate(BaseModel):
@@ -348,8 +383,11 @@ def chat(req: ChatRequest, user: dict = Depends(get_current_user)) -> ChatRespon
 
     now = datetime.now()
     busy = _calendar_busy_window(user["id"], now)
+    memory_facts = [f["fact"] for f in db.get_memory_facts(user["id"])]
+    open_tasks = [_with_risk(t, now) for t in db.list_tasks(user["id"]) if t.get("status") not in ("COMPLETED", "ARCHIVED")]  # noqa: F821 (defined below, same module)
     try:
-        result = engine.chat(req.message, [t.model_dump() for t in req.history], now=now, busy=busy)
+        result = engine.chat(req.message, [t.model_dump() for t in req.history], now=now, busy=busy,
+                              memory_facts=memory_facts, open_tasks=open_tasks)
     except Exception as err:  # noqa: BLE001
         print(f"[chat] Gemini call failed: {err!r}")
         if engine.is_quota_exhausted(err):
@@ -370,26 +408,52 @@ def chat(req: ChatRequest, user: dict = Depends(get_current_user)) -> ChatRespon
     )
 
 
+# --- Chat persistence (survives refresh/restart; session id is client-generated
+# and lives in localStorage, scoped server-side to the authenticated user) ----
+@app.get("/api/chats/{session_id}")
+def get_chat_session(session_id: str, user: dict = Depends(get_current_user)) -> dict:
+    return db.get_chat(session_id, user["id"]) or {"id": session_id, "messages": []}
+
+
+@app.post("/api/chats/{session_id}/messages")
+def add_chat_message(session_id: str, body: ChatMessageCreate, user: dict = Depends(get_current_user)) -> dict:
+    chat = db.append_chat_message(session_id, user["id"], body.role, body.content)
+    if chat is None:
+        raise HTTPException(status_code=404, detail="Chat session not found")
+    return chat
+
+
 # --- Task CRUD ----------------------------------------------------------------
+def _with_risk(task: dict, now: Optional[datetime] = None) -> dict:
+    """Attach a live deadline-risk prediction (risk.py) to a task dict — never
+    cached, so it's always computed against the current clock and current
+    estimated/completed hours."""
+    return {**task, "risk": risk.compute(task, now)}
+
+
 @app.get("/api/tasks")
 def get_tasks(user: dict = Depends(get_current_user)) -> List[dict]:
-    return db.list_tasks(user["id"])
+    now = datetime.now()
+    return [_with_risk(t, now) for t in db.list_tasks(user["id"])]
 
 
 @app.post("/api/tasks")
 def add_task(body: TaskCreate, user: dict = Depends(get_current_user)) -> dict:
-    return db.create_task(
+    created = db.create_task(
         user["id"],
         task_name=body.task_name,
         urgency=body.urgency.value,
         estimated_minutes=body.estimated_minutes,
+        completed_minutes=body.completed_minutes,
         deadline=body.deadline,
         next_micro_step=body.next_micro_step,
         goal_id=body.goal_id,
         url=body.url,
         selected_text=body.selected_text,
         tags=body.tags,
+        dependencies=body.dependencies,
     )
+    return _with_risk(created)
 
 
 @app.patch("/api/tasks/{task_id}")
@@ -406,6 +470,16 @@ def patch_task(task_id: int, body: TaskPatch, user: dict = Depends(get_current_u
 
     was_done = before["status"] == "COMPLETED"
     now_done = bool(updated) and updated["status"] == "COMPLETED"  # type: ignore[index]
+    now_started = fields.get("status") == "IN_PROGRESS" and before["status"] != "IN_PROGRESS"
+
+    # Long-term behavioral memory (memory.py): log the planned-vs-actual
+    # timing for this lifecycle transition. Raw events only — never chat.
+    if updated and now_started:
+        db.log_task_event(user["id"], task_id, updated["task_name"], updated.get("tags"), "started",
+                           before.get("scheduled_start"), before.get("scheduled_end"))
+    if updated and now_done and not was_done:
+        db.log_task_event(user["id"], task_id, updated["task_name"], updated.get("tags"), "completed",
+                           before.get("scheduled_start"), before.get("scheduled_end"))
 
     # Keep a linked goal's progress in sync when a task is completed/reopened.
     goal_id = updated["goal_id"] if updated else None
@@ -425,7 +499,7 @@ def patch_task(task_id: int, body: TaskPatch, user: dict = Depends(get_current_u
             if (wf.get("trigger_match") or "").lower() in task_name:
                 run_workflow_now(wf["id"], user)  # noqa: F821 (defined below, same module)
 
-    return updated  # type: ignore[return-value]
+    return _with_risk(updated) if updated else updated  # type: ignore[return-value]
 
 
 @app.delete("/api/tasks/{task_id}")
@@ -485,7 +559,23 @@ def status(user: dict = Depends(get_current_user)) -> dict:
     # hits it every 60s for autonomous rescheduling) rather than standing up
     # a separate cron/worker just for this.
     _run_due_workflows(user["id"])
-    return scheduler.analyze(db.list_tasks(user["id"]))
+    now = datetime.now()
+    tasks = db.list_tasks(user["id"])
+    result = scheduler.analyze(tasks, now=now)
+    # Deadline-risk prediction (risk.py) — distinct from the scheduler's
+    # at_risk above (which is "would the deterministic pack finish late");
+    # this is "is the user's actual pace on track to finish in time."
+    result["risks"] = [r for r in (risk.compute(t, now) for t in tasks) if r]
+    # Automatic task recovery: the "incomplete after end time" trigger fires
+    # here, on the same 60s poll the frontend already runs — anything found
+    # missed gets redistributed before the response goes out, and the
+    # frontend surfaces `recovery.message` as a system note.
+    result["recovery"] = _recover_and_persist(user["id"], [], now)  # noqa: F821 (defined below, same module)
+    # Long-term behavioral memory: re-summarize once enough new events have
+    # piled up since the last pass — see _run_auto_memory_summary's own gate,
+    # this is best-effort and never raises.
+    _run_auto_memory_summary(user["id"])  # noqa: F821 (defined below, same module)
+    return result
 
 
 @app.post("/api/reschedule")
@@ -520,6 +610,84 @@ def reschedule(user: dict = Depends(get_current_user)) -> dict:
         "at_risk": plan["at_risk"],
         "message": message,
     }
+
+
+# --- Automatic task recovery ---------------------------------------------------
+def _recover_and_persist(user_id: str, task_ids: List[int], now: datetime) -> Optional[dict]:
+    """Shared by the manual /api/tasks/recover endpoint, the explicit skip
+    endpoint, and the auto-trigger piggybacked on /api/status. `task_ids`
+    empty means auto-detect whatever's missed right now (scheduler.missed —
+    "incomplete after end time"); a non-empty list means "recover exactly
+    these tasks" (the explicit-skip / inactivity-detected triggers)."""
+    all_tasks = db.list_tasks(user_id)
+    by_id = {t["id"]: t for t in all_tasks}
+
+    if task_ids:
+        seeds = [by_id[i] for i in task_ids if i in by_id and by_id[i].get("status") not in ("COMPLETED", "ARCHIVED")]
+    else:
+        seeds = scheduler.missed(all_tasks, now=now)
+    if not seeds:
+        return None
+
+    busy = _calendar_busy_window(user_id, now)
+    moved = recovery.recover(seeds, all_tasks, now=now, busy=busy)
+    if not moved:
+        return None
+
+    for m in moved:
+        db.set_schedule(m["task_id"], user_id, m["new_start"].isoformat(), m["new_end"].isoformat())
+    regen_reminders(user_id)
+
+    lead = moved[0]
+    summary = recovery.describe(lead["chunks"], now)
+    extra = f" and {len(moved) - 1} dependent task(s) shifted to match" if len(moved) > 1 else ""
+    message = f'Task moved due to missed session: "{lead["task_name"]}" — {summary}{extra}.'
+
+    return {
+        "tasks": db.list_tasks(user_id),
+        "moved": [
+            {**m, "new_start": m["new_start"].isoformat(), "new_end": m["new_end"].isoformat(),
+             "chunks": [{"start": c["start"].isoformat(), "end": c["end"].isoformat()} for c in m["chunks"]]}
+            for m in moved
+        ],
+        "message": message,
+    }
+
+
+@app.get("/api/tasks/free-slots")
+def get_free_slots(user: dict = Depends(get_current_user)) -> List[dict]:
+    now = datetime.now()
+    busy = _calendar_busy_window(user["id"], now)
+    occupied = busy + [
+        (scheduler._parse(t["scheduled_start"]), scheduler._parse(t["scheduled_end"]))
+        for t in db.list_tasks(user["id"])
+        if t.get("scheduled_start") and t.get("scheduled_end")
+    ]
+    return [
+        {"start": s["start"].isoformat(), "end": s["end"].isoformat(), "free_hours": s["free_hours"]}
+        for s in recovery.find_free_slots(now, occupied)
+    ]
+
+
+@app.post("/api/tasks/recover")
+def recover_missed_tasks(body: RecoverRequest, user: dict = Depends(get_current_user)) -> dict:
+    result = _recover_and_persist(user["id"], body.task_ids, datetime.now())
+    return result or {"tasks": db.list_tasks(user["id"]), "moved": [], "message": "Nothing to recover."}
+
+
+@app.post("/api/tasks/{task_id}/skip")
+def skip_task(task_id: int, user: dict = Depends(get_current_user)) -> dict:
+    task = db.get_task(task_id, user["id"])
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found.")
+    if task.get("status") in ("COMPLETED", "ARCHIVED"):
+        raise HTTPException(status_code=400, detail="Task is already done.")
+    db.log_task_event(user["id"], task_id, task["task_name"], task.get("tags"), "skipped",
+                       task.get("scheduled_start"), task.get("scheduled_end"))
+    result = _recover_and_persist(user["id"], [task_id], datetime.now())
+    if not result:
+        raise HTTPException(status_code=400, detail="Nothing left to move for this task.")
+    return result
 
 
 # --- Google Calendar sync (two-way) -------------------------------------------
@@ -893,3 +1061,101 @@ def _run_due_workflows(user_id: str) -> None:
                 run_workflow_now(wf["id"], {"id": user_id})
             except Exception:  # noqa: BLE001 — never let a bad workflow break /api/status
                 pass
+
+
+# --- Long-term behavioral memory ---------------------------------------------
+def _summarize_memory_now(user_id: str) -> list[dict]:
+    events = db.list_task_events(user_id)
+    stats = memory.compute_stats(events)
+    result = engine.summarize_memory(memory.render_stats(stats))
+    facts = db.set_memory_facts(user_id, result.facts)
+    db.set_memory_checkpoint(user_id, len(events))
+    return facts
+
+
+def _run_auto_memory_summary(user_id: str) -> None:
+    """Best-effort, piggybacked on the same /api/status poll as the other
+    auto-triggers (see `status()`) — only actually calls Gemini once enough
+    NEW events have piled up since the last pass, not on every 60s poll.
+    A failure here (no API key, transient Gemini error) just means the next
+    poll tries again — the checkpoint only advances on success."""
+    if not engine.configured():
+        return
+    user = db.get_user(user_id) or {}
+    last_count = user.get("memory_event_count", 0)
+    event_count = len(db.list_task_events(user_id))
+    if event_count - last_count < memory.MIN_EVENTS_TO_SUMMARIZE:
+        return
+    try:
+        _summarize_memory_now(user_id)
+    except Exception:  # noqa: BLE001
+        pass
+
+
+@app.get("/api/memory")
+def get_memory(user: dict = Depends(get_current_user)) -> List[dict]:
+    return db.get_memory_facts(user["id"])
+
+
+@app.post("/api/memory/summarize")
+def summarize_memory_now(user: dict = Depends(get_current_user)) -> List[dict]:
+    if not engine.configured():
+        raise HTTPException(status_code=500, detail="GEMINI_API_KEY not configured.")
+    if not db.list_task_events(user["id"]):
+        raise HTTPException(status_code=400, detail="Not enough activity yet to learn from.")
+    try:
+        return _summarize_memory_now(user["id"])
+    except Exception as err:  # noqa: BLE001
+        if engine.is_quota_exhausted(err):
+            raise HTTPException(status_code=429, detail="Daily AI quota reached for this API key — try again tomorrow, or upgrade the Gemini API plan for a higher limit.")
+        if engine.is_transient(err):
+            raise HTTPException(status_code=503, detail="The AI model is busy. Try again in a moment.")
+        raise HTTPException(status_code=500, detail=str(err))
+
+
+# --- AI Task Decomposition ---------------------------------------------------
+@app.post("/api/tasks/decompose")
+def decompose_goal_draft(body: DecomposeRequest, user: dict = Depends(get_current_user)) -> dict:
+    """Turn a vague goal into a draft execution graph (subtasks + dependencies)
+    for the user to review — not saved yet, see POST /api/tasks/decompose/commit."""
+    if not body.goal.strip():
+        raise HTTPException(status_code=400, detail="goal must not be empty.")
+    if not engine.configured():
+        raise HTTPException(status_code=500, detail="GEMINI_API_KEY not configured.")
+    try:
+        plan = engine.decompose_goal(body.goal)
+    except Exception as err:  # noqa: BLE001
+        print(f"[tasks/decompose] Gemini call failed: {err!r}")
+        if engine.is_quota_exhausted(err):
+            raise HTTPException(status_code=429, detail="Daily AI quota reached for this API key — try again tomorrow, or upgrade the Gemini API plan for a higher limit.")
+        if engine.is_transient(err):
+            raise HTTPException(status_code=503, detail="The AI model is busy. Try again in a moment.")
+        raise HTTPException(status_code=500, detail=str(err))
+    return plan.model_dump()
+
+
+@app.post("/api/tasks/decompose/commit")
+def commit_decomposition(body: DecomposeCommitRequest, user: dict = Depends(get_current_user)) -> List[dict]:
+    """Persist a reviewed decomposition draft as real tasks in the `tasks`
+    collection, resolving each subtask's local draft id (only meaningful
+    within this one request) to the real Firestore task id it's assigned —
+    that remapped id list is what makes `dependencies` an actual execution
+    graph other endpoints/UI can walk."""
+    if not body.subtasks:
+        raise HTTPException(status_code=400, detail="subtasks must not be empty.")
+
+    id_map: dict[str, int] = {}
+    created = []
+    for s in body.subtasks:
+        task = db.create_task(
+            user["id"], task_name=s.title, urgency=s.priority.value,
+            estimated_minutes=round(s.estimated_hours * 60),
+        )
+        id_map[s.id] = task["id"]
+        created.append(task)
+
+    result = []
+    for s, task in zip(body.subtasks, created):
+        dep_ids = [id_map[d] for d in s.depends_on if d in id_map and id_map[d] != task["id"]]
+        result.append(db.update_task(task["id"], user["id"], dependencies=dep_ids) if dep_ids else task)
+    return result

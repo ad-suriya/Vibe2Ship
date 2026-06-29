@@ -48,6 +48,31 @@ def _priority_key(task: dict):
     return (URGENCY_RANK.get(task.get("urgency", "MEDIUM"), 1), deadline, task["id"])
 
 
+def remaining_minutes(task: dict) -> int:
+    """Work left to do, net of what's already logged (completed_minutes —
+    see risk.py) — a task that's half done shouldn't be re-packed as if
+    nothing had been logged against it."""
+    estimated = int(task.get("estimated_minutes") or 30)
+    completed = int(task.get("completed_minutes") or 0)
+    return max(0, estimated - completed)
+
+
+def missed(tasks: list[dict], now: Optional[datetime] = None) -> list[dict]:
+    """Tasks whose scheduled block has ENDED while they're still not done —
+    "incomplete after end time," distinct from `analyze()`'s `slipped`
+    (which only checks the block's start). Returns full task dicts (not just
+    ids) since recovery.py needs the rest of the fields to redistribute them."""
+    now = now or datetime.now()
+    out = []
+    for t in tasks:
+        if t.get("status") not in ("TODO", "IN_PROGRESS"):
+            continue
+        sched_end = _parse(t.get("scheduled_end"))
+        if sched_end and sched_end < now and remaining_minutes(t) > 0:
+            out.append(t)
+    return out
+
+
 def build_schedule(tasks: list[dict], now: Optional[datetime] = None,
                     busy: Optional[list[tuple[datetime, datetime]]] = None) -> dict:
     """Pack non-completed tasks into time blocks starting from `now`.
@@ -68,7 +93,7 @@ def build_schedule(tasks: list[dict], now: Optional[datetime] = None,
     at_risk: list[int] = []
 
     for task in ordered:
-        remaining = max(15, int(task.get("estimated_minutes") or 30))
+        remaining = max(15, remaining_minutes(task))
         first_start: Optional[datetime] = None
         last_end: Optional[datetime] = None
 

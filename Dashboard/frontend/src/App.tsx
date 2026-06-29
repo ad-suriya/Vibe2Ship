@@ -8,12 +8,13 @@ import { LoginPage } from './LoginPage';
 import {
   Loader2, Send, Copy, Check, Timer, CalendarPlus, Play, Pause, RotateCcw,
   Plus, CalendarDays, RefreshCw, Trash2, Download, Clock, AlertTriangle, ArrowRight, Link2, Unlink,
-  MessageCircle, X, HelpCircle, Crosshair,
+  MessageCircle, X, HelpCircle, Crosshair, SkipForward,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { api } from './api';
 import {
-  AgenticAction, ChatMessage, Goal, Habit, Mode, Status, SystemTrigger, Task, Urgency, Workflow, WorkflowPlan,
+  AgenticAction, ChatMessage, DecompositionPlan, Goal, Habit, MemoryFact, Mode, Status, SystemTrigger, Task,
+  TaskRisk, Urgency, Workflow, WorkflowPlan,
 } from './types';
 import RemindersBell from './components/RemindersBell';
 import GoalsPanel from './components/GoalsPanel';
@@ -24,6 +25,8 @@ import SearchBar from './components/SearchBar';
 import GuidedTour from './components/GuidedTour';
 import NotificationPrompt from './components/NotificationPrompt';
 import WorkflowsPanel from './components/WorkflowsPanel';
+import DecomposePanel from './components/DecomposePanel';
+import MemoryPanel from './components/MemoryPanel';
 import Sidebar, { Section } from './components/Sidebar';
 
 const MODE_META: Record<Mode, { label: string; color: string; blurb: string }> = {
@@ -34,6 +37,7 @@ const MODE_META: Record<Mode, { label: string; color: string; blurb: string }> =
 };
 const URGENCY_COLOR: Record<Urgency, string> = { HIGH: '#D14D2A', MEDIUM: '#1A1A1A', LOW: '#6B7280' };
 const URGENCY_RANK: Record<Urgency, number> = { HIGH: 0, MEDIUM: 1, LOW: 2 };
+const RISK_COLOR: Record<TaskRisk['risk_level'], string> = { high: '#D14D2A', medium: '#C99A2E', safe: '#2A6B5E' };
 const STATUS_LABEL: Record<Status, string> = { TODO: 'To Do', IN_PROGRESS: 'In Progress', COMPLETED: 'Completed' };
 const ACTION_LABEL: Record<string, string> = {
   DRAFT_EMAIL: 'Drafted Email', CREATE_OUTLINE: 'Generated Outline',
@@ -44,6 +48,15 @@ const SEED_MESSAGE: ChatMessage = {
   role: 'model',
   text: "What's weighing on you? Dump the deadline, the half-finished task, the thing you keep avoiding — I'll turn it into a plan and start the first step for you.",
 };
+
+const CHAT_SESSION_KEY = 'chatSessionId';
+function loadOrCreateChatSessionId(): string {
+  const existing = localStorage.getItem(CHAT_SESSION_KEY);
+  if (existing) return existing;
+  const id = crypto.randomUUID();
+  localStorage.setItem(CHAT_SESSION_KEY, id);
+  return id;
+}
 
 const pad = (n: number) => n.toString().padStart(2, '0');
 const fmtTimer = (s: number) => `${pad(Math.floor(s / 60))}:${pad(s % 60)}`;
@@ -76,7 +89,9 @@ export default function App() {
   const [authLoading, setAuthLoading] = useState(true);
   const [authError, setAuthError] = useState('');
 
-  const [messages, setMessages] = useState<ChatMessage[]>([SEED_MESSAGE]);
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [chatSessionId, setChatSessionId] = useState<string>(loadOrCreateChatSessionId);
+  const [chatLoading, setChatLoading] = useState(true); // hydrating from Firestore
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -88,6 +103,9 @@ export default function App() {
   const [quickReplies, setQuickReplies] = useState<string[]>([]);
   const [atRisk, setAtRisk] = useState<Set<number>>(new Set());
   const [overdue, setOverdue] = useState<Set<number>>(new Set());
+  // Deadline-risk prediction (risk.py), keyed by task id — refreshed by the
+  // same 60s status poll, plus immediately after any edit that affects it.
+  const [taskRisks, setTaskRisks] = useState<Record<number, TaskRisk>>({});
 
   const [pomoSeconds, setPomoSeconds] = useState(POMODORO_SECONDS);
   const [pomoRunning, setPomoRunning] = useState(false);
@@ -101,6 +119,7 @@ export default function App() {
   const [goals, setGoals] = useState<Goal[]>([]);
   const [habits, setHabits] = useState<Habit[]>([]);
   const [workflows, setWorkflows] = useState<Workflow[]>([]);
+  const [memoryFacts, setMemoryFacts] = useState<MemoryFact[]>([]);
   const [tab, setTab] = useState<Section>('plan');
   const [chatOpen, setChatOpen] = useState(true);
   const [showTutorial, setShowTutorial] = useState(false);
@@ -198,6 +217,26 @@ export default function App() {
 
   useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages, loading]);
 
+  // Restore the conversation for this session id from Firestore (via the
+  // backend) on startup/refresh — runs before render shows an empty chat.
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    let cancelled = false;
+    setChatLoading(true);
+    api.getChatSession(chatSessionId)
+      .then((chat) => {
+        if (cancelled) return;
+        setMessages(
+          chat.messages.length > 0
+            ? chat.messages.map((m) => ({ role: m.role, text: m.content }))
+            : [SEED_MESSAGE],
+        );
+      })
+      .catch(() => { if (!cancelled) setMessages([SEED_MESSAGE]); })
+      .finally(() => { if (!cancelled) setChatLoading(false); });
+    return () => { cancelled = true; };
+  }, [isAuthenticated, chatSessionId]);
+
   useEffect(() => {
     if (!isAuthenticated) return;
 
@@ -205,6 +244,7 @@ export default function App() {
     api.listGoals().then(setGoals).catch(() => {});
     api.listHabits().then(setHabits).catch(() => {});
     api.listWorkflows().then(setWorkflows).catch(() => {});
+    api.getMemory().then(setMemoryFacts).catch(() => {});
     api.calendarStatus().then((s) => setCalendarConnected(s.connected)).catch(() => {});
 
     if (!localStorage.getItem('tutorialSeen')) setShowTutorial(true);
@@ -293,7 +333,10 @@ export default function App() {
     api.patchSession(id, { end_time: new Date().toISOString() }).catch(() => {});
   }, [pomoSeconds, pomoSessionId]);
 
-  // Autonomous rescheduling: poll status, auto-replan when tasks have slipped.
+  // Autonomous rescheduling + deadline-risk refresh: poll status, auto-replan
+  // when tasks have slipped. This same 60s tick is what makes risk "real
+  // time" — every poll recomputes against the current clock, well inside
+  // the "run hourly" requirement.
   useEffect(() => {
     const check = async () => {
       if (guardRef.current || loading) return;
@@ -301,6 +344,14 @@ export default function App() {
         const s = await api.status();
         setAtRisk(new Set(s.at_risk));
         setOverdue(new Set(s.overdue));
+        setTaskRisks(Object.fromEntries(s.risks.map((r) => [r.task_id, r])));
+        // Automatic task recovery's "incomplete after end time" trigger
+        // fires server-side on this same poll (see recovery.py) — surface
+        // it the moment it happens, same pattern as a workflow firing.
+        if (s.recovery) {
+          setTasks(s.recovery.tasks);
+          pushSystem(s.recovery.message);
+        }
         if (s.recommend_reschedule) {
           guardRef.current = true;
           const r = await api.reschedule();
@@ -313,9 +364,47 @@ export default function App() {
     };
     const id = setInterval(check, 60_000);
     const t = setTimeout(check, 4_000); // first pass shortly after load
-    return () => { clearInterval(id); clearTimeout(t); };
+
+    // "Run after inactivity": a backgrounded/minimized tab pauses JS timers,
+    // so the 60s interval can't be trusted to have fired — force an
+    // immediate recheck the moment the tab becomes visible again.
+    const onVisible = () => { if (document.visibilityState === 'visible') check(); };
+    document.addEventListener('visibilitychange', onVisible);
+
+    return () => { clearInterval(id); clearTimeout(t); document.removeEventListener('visibilitychange', onVisible); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loading]);
+
+  // Automatic task recovery — "inactivity detected" trigger: distinct from
+  // the time-based "incomplete after end time" trigger above (which fires
+  // on the clock regardless of whether anyone's there), this fires only
+  // when the user has stopped interacting while a task is IN_PROGRESS and
+  // already past its scheduled end — i.e. they walked away mid-task.
+  const tasksRef = useRef<Task[]>(tasks);
+  useEffect(() => { tasksRef.current = tasks; }, [tasks]);
+  useEffect(() => {
+    const IDLE_THRESHOLD_MS = 5 * 60_000;
+    let lastActivity = Date.now();
+    const handled = new Set<number>();
+    const markActive = () => { lastActivity = Date.now(); };
+    const events: (keyof WindowEventMap)[] = ['mousemove', 'keydown', 'mousedown', 'touchstart', 'scroll'];
+    events.forEach((e) => window.addEventListener(e, markActive, { passive: true }));
+
+    const id = setInterval(() => {
+      if (Date.now() - lastActivity < IDLE_THRESHOLD_MS) return;
+      const now = Date.now();
+      const stale = tasksRef.current.find((t) =>
+        t.status === 'IN_PROGRESS' && t.scheduled_end && new Date(t.scheduled_end).getTime() < now && !handled.has(t.id),
+      );
+      if (stale) {
+        handled.add(stale.id);
+        skipTask(stale);
+      }
+    }, 30_000);
+
+    return () => { events.forEach((e) => window.removeEventListener(e, markActive)); clearInterval(id); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Auto-sync with Google Calendar: pulls in events the user added directly
   // on their calendar (as tasks) and pushes the current plan back out, on a
@@ -346,11 +435,28 @@ export default function App() {
   const pushSystem = (text: string) =>
     setMessages((prev) => [...prev, { role: 'model', text, system: true }]);
 
+  // Old sessions are left in Firestore untouched — only the localStorage
+  // pointer moves, so switching back would still find them if we ever add
+  // a session switcher.
+  const startNewChat = () => {
+    const id = crypto.randomUUID();
+    localStorage.setItem(CHAT_SESSION_KEY, id);
+    setChatSessionId(id);
+    setMessages([SEED_MESSAGE]);
+    setQuickReplies([]);
+    setError('');
+  };
+
   const refreshStatus = async () => {
     try {
       const s = await api.status();
       setAtRisk(new Set(s.at_risk));
       setOverdue(new Set(s.overdue));
+      setTaskRisks(Object.fromEntries(s.risks.map((r) => [r.task_id, r])));
+      if (s.recovery) {
+        setTasks(s.recovery.tasks);
+        pushSystem(s.recovery.message);
+      }
     } catch { /* ignore */ }
   };
 
@@ -362,6 +468,7 @@ export default function App() {
       .map((m) => ({ role: m.role, text: m.text }));
 
     setMessages((prev) => [...prev, { role: 'user', text: trimmed }]);
+    api.addChatMessage(chatSessionId, 'user', trimmed).catch(() => {});
     setInput('');
     setQuickReplies([]);
     setError('');
@@ -369,6 +476,7 @@ export default function App() {
     try {
       const data = await api.chat(trimmed, history);
       setMessages((prev) => [...prev, { role: 'model', text: data.chat_ui.agent_message }]);
+      api.addChatMessage(chatSessionId, 'model', data.chat_ui.agent_message).catch(() => {});
       setQuickReplies(data.chat_ui.suggested_quick_replies || []);
       setMode(data.current_mode);
       setAction(data.agentic_action?.action_type !== 'NONE' ? data.agentic_action : null);
@@ -412,6 +520,11 @@ export default function App() {
     const next: Status = task.status === 'TODO' ? 'IN_PROGRESS' : task.status === 'IN_PROGRESS' ? 'COMPLETED' : 'TODO';
     const updated = await api.patchTask(task.id, { status: next });
     setTasks((prev) => prev.map((t) => (t.id === task.id ? updated : t)));
+    setTaskRisks((prev) => {
+      if (updated.risk) return { ...prev, [task.id]: updated.risk };
+      const { [task.id]: _drop, ...rest } = prev; // e.g. just marked COMPLETED — no risk anymore
+      return rest;
+    });
     refreshStatus();
     if (task.goal_id) api.listGoals().then(setGoals).catch(() => {}); // keep linked goal progress in sync
   };
@@ -419,6 +532,28 @@ export default function App() {
   const removeTask = async (id: number) => {
     await api.deleteTask(id);
     setTasks((prev) => prev.filter((t) => t.id !== id));
+  };
+
+  // "Run on task update": logging hours immediately returns a freshly
+  // computed risk (risk.py) on this one task — no need to wait for the
+  // next 60s status poll to see the badge move.
+  const logCompletedHours = async (task: Task, hours: number) => {
+    const updated = await api.patchTask(task.id, { completed_minutes: Math.max(0, Math.round(hours * 60)) });
+    setTasks((prev) => prev.map((t) => (t.id === task.id ? updated : t)));
+    if (updated.risk) setTaskRisks((prev) => ({ ...prev, [task.id]: updated.risk! }));
+  };
+
+  // Automatic task recovery — "user skips task" trigger. Inactivity
+  // detection (below) calls this same handler for the same reason: both are
+  // just different ways of deciding a task got missed.
+  const skipTask = async (task: Task) => {
+    try {
+      const result = await api.skipTask(task.id);
+      setTasks(result.tasks);
+      pushSystem(result.message);
+    } catch (err: any) {
+      setError(err.message || 'Could not move this task.');
+    }
   };
 
   const addTask = async () => {
@@ -480,6 +615,21 @@ export default function App() {
   const deleteWorkflowById = async (id: number) => {
     await api.deleteWorkflow(id);
     setWorkflows((prev) => prev.filter((x) => x.id !== id));
+  };
+
+  // --- task decomposition handlers (AI Task Decomposition) ------------------
+  const decomposeGoalDraft = (goal: string) => api.decomposeGoal(goal);
+  const commitDecomposition = async (plan: DecompositionPlan) => {
+    const created = await api.commitDecomposition(plan.goal, plan.subtasks);
+    setTasks((prev) => [...prev, ...created]);
+    pushSystem(`Broke "${plan.goal}" into ${created.length} task${created.length === 1 ? '' : 's'}.`);
+    return created;
+  };
+
+  // --- long-term behavioral memory -------------------------------------------
+  const summarizeMemoryNow = async () => {
+    const facts = await api.summarizeMemory();
+    setMemoryFacts(facts);
   };
 
   // Search result selection: jump to the relevant tab. Tasks live on the
@@ -814,6 +964,12 @@ export default function App() {
               onDelete={deleteWorkflowById}
             />
           )}
+          {tab === 'breakdown' && (
+            <DecomposePanel onGenerate={decomposeGoalDraft} onCommit={commitDecomposition} />
+          )}
+          {tab === 'memory' && (
+            <MemoryPanel facts={memoryFacts} onSummarize={summarizeMemoryNow} />
+          )}
           {tab === 'habits' && (
             <HabitsPanel habits={habits} onAdd={addHabit} onCheck={checkHabit} onDelete={deleteHabit} />
           )}
@@ -929,6 +1085,7 @@ export default function App() {
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
                 {tasks.map((task) => {
                   const done = task.status === 'COMPLETED';
+                  const taskRisk = taskRisks[task.id] ?? task.risk ?? null;
                   return (
                     <div key={task.id} className={`bg-white border border-[#1A1A1A] p-4 flex flex-col shadow-[3px_3px_0px_0px_rgba(26,26,26,0.1)] ${done ? 'opacity-50' : ''}`}>
                       <div className="flex justify-between items-start mb-2 gap-2">
@@ -943,6 +1100,33 @@ export default function App() {
                         <span>~{task.estimated_minutes} min</span>
                         {task.deadline && <span>Due {fmtDeadline(task.deadline)}</span>}
                       </div>
+                      {!done && task.deadline && (
+                        <div className="mb-3 pb-3 border-b border-dashed border-gray-300 space-y-1.5">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            {taskRisk && (
+                              <span className="font-sans text-[9px] font-bold px-2 py-0.5 text-white uppercase tracking-widest"
+                                style={{ backgroundColor: RISK_COLOR[taskRisk.risk_level] }}>
+                                {taskRisk.risk_level} risk · {taskRisk.risk_percent}%
+                              </span>
+                            )}
+                            <label className="font-sans text-[9px] uppercase tracking-wide opacity-60 flex items-center gap-1 ml-auto">
+                              Logged
+                              <input
+                                key={`${task.id}-${task.completed_minutes ?? 0}`}
+                                type="number" min={0} step={0.5}
+                                defaultValue={((task.completed_minutes ?? 0) / 60).toFixed(1)}
+                                onBlur={(e) => {
+                                  const h = Number(e.target.value);
+                                  if (!Number.isNaN(h)) logCompletedHours(task, h);
+                                }}
+                                className="w-14 p-1 border border-[#1A1A1A]/30 font-sans text-[11px] normal-case"
+                              />
+                              h
+                            </label>
+                          </div>
+                          {taskRisk && <p className="font-sans text-[11px] italic opacity-70">{taskRisk.reason}</p>}
+                        </div>
+                      )}
                       <div className="mb-3 pt-3 border-t border-dashed border-gray-300">
                         <span className="font-sans text-[9px] font-bold uppercase block mb-1 opacity-60">Next Step</span>
                         <p className="font-sans text-[12px] leading-snug">{task.next_micro_step || '—'}</p>
@@ -957,6 +1141,12 @@ export default function App() {
                             disabled={task.status === 'IN_PROGRESS'}
                             className="font-sans text-[10px] uppercase font-bold tracking-widest px-2 py-1 border border-[#D14D2A] text-[#D14D2A] hover:bg-[#D14D2A] hover:text-white transition-colors disabled:opacity-40 flex items-center gap-1">
                             <Crosshair className="w-3 h-3" /> Focus
+                          </button>
+                        )}
+                        {!done && task.scheduled_start && (
+                          <button onClick={() => skipTask(task)} title="Move this task — frees the slot and redistributes the remaining work into the next free time"
+                            className="font-sans text-[10px] uppercase font-bold tracking-widest px-2 py-1 border border-[#1A1A1A]/30 hover:border-[#1A1A1A] transition-colors flex items-center gap-1">
+                            <SkipForward className="w-3 h-3" /> Skip
                           </button>
                         )}
                         <a href={api.taskIcsUrl(task.id)} title="Download .ics" className="p-1 border border-[#1A1A1A]/30 hover:border-[#2A6B5E] hover:text-[#2A6B5E] transition-colors"><Download className="w-3.5 h-3.5" /></a>
@@ -989,13 +1179,24 @@ export default function App() {
             <div className="w-2 h-2 rounded-full bg-[#D14D2A] animate-pulse" />
             <span className="font-sans text-[10px] uppercase tracking-widest font-black">Conversation</span>
           </div>
-          <button onClick={() => setChatOpen(false)} aria-label="Close chat" className="p-1 hover:text-[#D14D2A]">
-            <X className="w-4 h-4" />
-          </button>
+          <div className="flex items-center gap-1">
+            <button onClick={startNewChat} aria-label="New chat" title="New chat"
+              className="p-1 hover:text-[#D14D2A]">
+              <Plus className="w-4 h-4" />
+            </button>
+            <button onClick={() => setChatOpen(false)} aria-label="Close chat" className="p-1 hover:text-[#D14D2A]">
+              <X className="w-4 h-4" />
+            </button>
+          </div>
         </div>
 
         <div className="flex-grow overflow-y-auto px-5 py-4 space-y-4">
-          {messages.map((m, i) => (
+          {chatLoading && (
+            <div className="flex justify-center pt-8">
+              <Loader2 className="w-5 h-5 animate-spin text-[#D14D2A]" />
+            </div>
+          )}
+          {!chatLoading && messages.map((m, i) => (
             <div key={i} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
               <div className={`max-w-[85%] font-sans text-sm leading-relaxed px-4 py-3 ${
                 m.role === 'user' ? 'bg-[#1A1A1A] text-white'
@@ -1033,8 +1234,8 @@ export default function App() {
           <textarea
             className="flex-grow h-16 p-3 border border-[#1A1A1A]/30 bg-white font-sans text-sm focus:outline-none focus:ring-1 focus:ring-[#1A1A1A] resize-none"
             placeholder="Tell me what's due and where you're stuck…"
-            value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={handleKeyDown} disabled={loading} />
-          <button onClick={() => send(input)} disabled={loading || !input.trim()}
+            value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={handleKeyDown} disabled={loading || chatLoading} />
+          <button onClick={() => send(input)} disabled={loading || chatLoading || !input.trim()}
             className="h-16 px-5 bg-[#1A1A1A] hover:bg-[#333] disabled:bg-gray-400 text-white flex items-center justify-center shadow-[3px_3px_0px_0px_#D14D2A] transition-colors" aria-label="Send">
             <Send className="w-4 h-4" />
           </button>

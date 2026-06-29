@@ -1,7 +1,7 @@
 import React from 'react';
-import { CalendarDays, LayoutGrid, Target, Repeat, Workflow as WorkflowIcon, LucideIcon } from 'lucide-react';
+import { CalendarDays, LayoutGrid, Target, Repeat, Workflow as WorkflowIcon, GitBranch, Brain, LucideIcon } from 'lucide-react';
 
-export type Section = 'plan' | 'board' | 'goals' | 'habits' | 'workflows';
+export type Section = 'plan' | 'board' | 'goals' | 'habits' | 'workflows' | 'breakdown' | 'memory';
 
 interface NavItem {
   id: Section;
@@ -12,9 +12,11 @@ interface NavItem {
 const NAV_ITEMS: NavItem[] = [
   { id: 'plan', label: 'Plan', icon: CalendarDays },
   { id: 'board', label: 'Tasks', icon: LayoutGrid },
+  { id: 'breakdown', label: 'Breakdown', icon: GitBranch },
   { id: 'goals', label: 'Goals', icon: Target },
   { id: 'habits', label: 'Habits', icon: Repeat },
   { id: 'workflows', label: 'Workflows', icon: WorkflowIcon },
+  { id: 'memory', label: 'Memory', icon: Brain },
 ];
 
 interface Props {

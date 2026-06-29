@@ -15,6 +15,7 @@ _data = {
     "calendar_accounts": {},
     "workflows": {},
     "counters": {},
+    "chats": {},
 }
 
 _next_ids = {
@@ -64,7 +65,7 @@ def get_task(task_id: int, user_id: str) -> Optional[dict]:
 
 def create_task(user_id: str, task_name, status="TODO", urgency="MEDIUM", estimated_minutes=30,
                 deadline=None, next_micro_step="", goal_id=None, url=None,
-                selected_text=None, tags=None) -> dict:
+                selected_text=None, tags=None, dependencies=None, completed_minutes=0) -> dict:
     task_id = _next_ids["tasks"]
     _next_ids["tasks"] += 1
     ts = now_iso()
@@ -75,6 +76,7 @@ def create_task(user_id: str, task_name, status="TODO", urgency="MEDIUM", estima
         "status": status,
         "urgency": urgency,
         "estimated_minutes": estimated_minutes,
+        "completed_minutes": completed_minutes or 0,
         "deadline": deadline,
         "next_micro_step": next_micro_step,
         "scheduled_start": None,
@@ -83,6 +85,7 @@ def create_task(user_id: str, task_name, status="TODO", urgency="MEDIUM", estima
         "url": url,
         "selected_text": selected_text,
         "tags": tags or [],
+        "dependencies": dependencies or [],
         "calendar_event_id": None,
         "created_at": ts,
         "updated_at": ts,
@@ -92,9 +95,9 @@ def create_task(user_id: str, task_name, status="TODO", urgency="MEDIUM", estima
 
 
 def update_task(task_id: int, user_id: str, **fields) -> Optional[dict]:
-    allowed = {"task_name", "status", "urgency", "estimated_minutes", "deadline",
+    allowed = {"task_name", "status", "urgency", "estimated_minutes", "completed_minutes", "deadline",
                "next_micro_step", "scheduled_start", "scheduled_end", "goal_id",
-               "url", "selected_text", "tags", "calendar_event_id"}
+               "url", "selected_text", "tags", "calendar_event_id", "dependencies"}
     task = _data["tasks"].get(task_id)
     if not task or task["user_id"] != user_id:
         return None
@@ -468,6 +471,33 @@ def delete_project(project_id: int, user_id: str) -> bool:
     return False
 
 
+# --- Chat sessions (Dashboard AI chat, persisted so a refresh/restart
+# restores the conversation)
+def get_chat(session_id: str, user_id: str) -> Optional[dict]:
+    chat = _data["chats"].get(session_id)
+    if chat and chat.get("user_id") != user_id:
+        return None
+    return chat
+
+
+def append_chat_message(session_id: str, user_id: str, role: str, content: str) -> Optional[dict]:
+    existing = _data["chats"].get(session_id)
+    if existing and existing.get("user_id") != user_id:
+        return None
+    ts = now_iso()
+    messages = (existing or {}).get("messages", [])
+    messages = messages + [{"id": len(messages) + 1, "role": role, "content": content, "timestamp": ts}]
+    doc = {
+        "id": session_id,
+        "user_id": user_id,
+        "messages": messages,
+        "created_at": existing["created_at"] if existing else ts,
+        "updated_at": ts,
+    }
+    _data["chats"][session_id] = doc
+    return doc
+
+
 # --- Users (Google login identity, persisted instead of staying client-only)
 def get_user(user_id: str) -> Optional[dict]:
     return _data["users"].get(user_id)
@@ -486,6 +516,43 @@ def upsert_user(user_id: str, email: str = "", name: str = "", picture: Optional
     }
     _data["users"][user_id] = user
     return user
+
+
+# --- Long-term behavioral memory ---------------------------------------------
+def log_task_event(user_id: str, task_id: int, task_name: str, tags, event: str,
+                    planned_start, planned_end) -> dict:
+    event_id = _next_ids.setdefault("task_events", 1)
+    _next_ids["task_events"] += 1
+    ts = now_iso()
+    rec = {
+        "id": event_id, "user_id": user_id, "task_id": task_id, "task_name": task_name,
+        "tags": tags or [], "event": event, "planned_start": planned_start, "planned_end": planned_end,
+        "actual_at": ts, "created_at": ts,
+    }
+    _data.setdefault("task_events", {})[event_id] = rec
+    return rec
+
+
+def list_task_events(user_id: str) -> list[dict]:
+    return sorted((e for e in _data.get("task_events", {}).values() if e["user_id"] == user_id), key=lambda e: e["id"])
+
+
+def get_memory_facts(user_id: str) -> list[dict]:
+    return sorted(_data.setdefault("memory", {}).get(user_id, []), key=lambda f: f.get("id", 0))
+
+
+def set_memory_facts(user_id: str, facts: list[str]) -> list[dict]:
+    ts = now_iso()
+    saved = [{"id": i, "fact": fact, "created_at": ts} for i, fact in enumerate(facts, start=1)]
+    _data.setdefault("memory", {})[user_id] = saved
+    return saved
+
+
+def set_memory_checkpoint(user_id: str, event_count: int) -> None:
+    user = _data["users"].get(user_id)
+    if user:
+        user["memory_event_count"] = event_count
+        user["memory_summarized_at"] = now_iso()
 
 
 # --- Google Calendar accounts

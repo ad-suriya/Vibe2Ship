@@ -135,7 +135,7 @@ def get_task(task_id: int, user_id: str) -> Optional[dict]:
 
 def create_task(user_id: str, task_name, status="TODO", urgency="MEDIUM", estimated_minutes=30,
                 deadline=None, next_micro_step="", goal_id=None, url=None,
-                selected_text=None, tags=None) -> dict:
+                selected_text=None, tags=None, dependencies=None, completed_minutes=0) -> dict:
     ts = now_iso()
     return _save("tasks", {
         "id": _next_id("tasks"),
@@ -144,6 +144,9 @@ def create_task(user_id: str, task_name, status="TODO", urgency="MEDIUM", estima
         "status": status,
         "urgency": urgency,
         "estimated_minutes": estimated_minutes,
+        # Actual minutes logged so far — drives the deadline-risk prediction
+        # (risk.py). Not auto-tracked from focus sessions; the user/UI sets it.
+        "completed_minutes": completed_minutes or 0,
         "deadline": deadline,
         "next_micro_step": next_micro_step,
         "scheduled_start": None,
@@ -152,6 +155,10 @@ def create_task(user_id: str, task_name, status="TODO", urgency="MEDIUM", estima
         "url": url,
         "selected_text": selected_text,
         "tags": tags or [],
+        # Other task ids (within this same Firestore "tasks" collection) that
+        # must be COMPLETED before this one starts — the execution graph for
+        # AI-decomposed goals. Empty for tasks created any other way.
+        "dependencies": dependencies or [],
         "calendar_event_id": None,
         "created_at": ts,
         "updated_at": ts,
@@ -159,9 +166,9 @@ def create_task(user_id: str, task_name, status="TODO", urgency="MEDIUM", estima
 
 
 def update_task(task_id: int, user_id: str, **fields) -> Optional[dict]:
-    allowed = {"task_name", "status", "urgency", "estimated_minutes", "deadline",
+    allowed = {"task_name", "status", "urgency", "estimated_minutes", "completed_minutes", "deadline",
                "next_micro_step", "scheduled_start", "scheduled_end", "goal_id",
-               "url", "selected_text", "tags", "calendar_event_id"}
+               "url", "selected_text", "tags", "calendar_event_id", "dependencies"}
     sets = {k: v for k, v in fields.items() if k in allowed and v is not None}
     if not sets:
         return get_task(task_id, user_id)
@@ -457,6 +464,35 @@ def delete_project(project_id: int, user_id: str) -> bool:
     return _delete("projects", project_id, user_id)
 
 
+# --- Chat sessions (Dashboard AI chat, persisted so a refresh/restart
+# restores the conversation) -----------------------------------------------
+def get_chat(session_id: str, user_id: str) -> Optional[dict]:
+    return _get("chats", session_id, user_id)
+
+
+def append_chat_message(session_id: str, user_id: str, role: str, content: str) -> Optional[dict]:
+    """Append a message to a chat session, creating the doc on first use.
+
+    Returns None if the session id already exists under a different user —
+    same "exists but not yours" -> None convention as the rest of this file,
+    so main.py can 404 it without leaking whether the id is taken.
+    """
+    existing = _get("chats", session_id, user_id=None)
+    if existing and existing.get("user_id") != user_id:
+        return None
+    ts = now_iso()
+    messages = (existing or {}).get("messages", [])
+    messages = messages + [{"id": len(messages) + 1, "role": role, "content": content, "timestamp": ts}]
+    doc = {
+        "id": session_id,
+        "user_id": user_id,
+        "messages": messages,
+        "created_at": existing["created_at"] if existing else ts,
+        "updated_at": ts,
+    }
+    return _save("chats", doc)
+
+
 # --- Users (Google login identity, persisted instead of staying client-only)
 def get_user(user_id: str) -> Optional[dict]:
     return _get("users", user_id)
@@ -473,6 +509,62 @@ def upsert_user(user_id: str, email: str = "", name: str = "", picture: Optional
         "created_at": existing["created_at"] if existing else ts,
         "updated_at": ts,
     })
+
+
+# --- Long-term behavioral memory --------------------------------------------
+# Raw substrate: a flat event log (planned vs. actual timing per task
+# lifecycle transition) — never raw chat. memory.py aggregates this into a
+# handful of compact natural-language facts, which is the only thing ever
+# read back as AI context (see engine.chat's memory_facts param).
+def log_task_event(user_id: str, task_id: int, task_name: str, tags: Optional[list], event: str,
+                    planned_start: Optional[str], planned_end: Optional[str]) -> dict:
+    ts = now_iso()
+    return _save("task_events", {
+        "id": _next_id("task_events"),
+        "user_id": user_id,
+        "task_id": task_id,
+        "task_name": task_name,
+        "tags": tags or [],
+        "event": event,  # "started" | "completed" | "skipped"
+        "planned_start": planned_start,
+        "planned_end": planned_end,
+        "actual_at": ts,
+        "created_at": ts,
+    })
+
+
+def list_task_events(user_id: str) -> list[dict]:
+    return sorted(_all("task_events", user_id), key=lambda e: e["id"])
+
+
+def _memory_col(user_id: str):
+    return _db().collection("users").document(user_id).collection("memory")
+
+
+def get_memory_facts(user_id: str) -> list[dict]:
+    return sorted([d.to_dict() for d in _memory_col(user_id).stream()], key=lambda f: f.get("id", 0))
+
+
+def set_memory_facts(user_id: str, facts: list[str]) -> list[dict]:
+    """Replaces the whole users/{user_id}/memory subcollection — a bounded,
+    "compact" set of current facts, not an ever-growing log."""
+    col = _memory_col(user_id)
+    for doc in col.stream():
+        doc.reference.delete()
+    ts = now_iso()
+    saved = []
+    for i, fact in enumerate(facts, start=1):
+        rec = {"id": i, "fact": fact, "created_at": ts}
+        col.document(str(i)).set(rec)
+        saved.append(rec)
+    return saved
+
+
+def set_memory_checkpoint(user_id: str, event_count: int) -> None:
+    """Tracks how many events have been folded into memory so far, so the
+    auto-summarizer (piggybacked on /api/status) only re-runs once there's
+    a meaningful number of new events — not on every 60s poll."""
+    _patch("users", user_id, {"memory_event_count": event_count, "memory_summarized_at": now_iso()})
 
 
 # --- Google Calendar accounts ---------------------------------------------

@@ -39,6 +39,9 @@ export interface Task {
   status: Status;
   urgency: Urgency;
   estimated_minutes: number;
+  // Actual minutes logged so far — drives the deadline-risk prediction
+  // below. Not auto-tracked from focus sessions; set via the UI.
+  completed_minutes?: number;
   deadline: string | null; // ISO 8601 local datetime
   next_micro_step: string;
   scheduled_start: string | null;
@@ -47,6 +50,26 @@ export interface Task {
   calendar_event_id: string | null;
   created_at: string;
   updated_at: string;
+  // Other task ids that must be COMPLETED before this one starts — the
+  // execution graph for AI-decomposed goals. Absent/empty for tasks created
+  // any other way (chat, manual add, workflows).
+  dependencies?: number[];
+  // Live deadline-risk prediction (risk.py), recomputed on every fetch —
+  // null if the task has no deadline or is already done.
+  risk?: TaskRisk | null;
+}
+
+export type RiskLevel = 'safe' | 'medium' | 'high';
+
+export interface TaskRisk {
+  task_id: number;
+  risk_score: number;
+  risk_percent: number;
+  risk_level: RiskLevel;
+  remaining_hours: number;
+  usable_hours: number;
+  productivity_factor: number;
+  reason: string;
 }
 
 // A focus/work-timer session — the same resource the Chrome extension's
@@ -79,6 +102,10 @@ export interface StatusInfo {
   slipped: number[];
   at_risk: number[];
   recommend_reschedule: boolean;
+  risks: TaskRisk[];
+  // Automatic task recovery — set when the "incomplete after end time"
+  // trigger fired during this poll (see recovery.py), null otherwise.
+  recovery: RecoveryResult | null;
 }
 
 export interface ScheduleResult {
@@ -93,6 +120,43 @@ export interface RescheduleResult {
   overdue: number[];
   at_risk: number[];
   message: string;
+}
+
+// --- Automatic task recovery -------------------------------------------------
+export interface RecoveryChunk {
+  start: string;
+  end: string;
+}
+
+export interface RecoveryMove {
+  task_id: number;
+  task_name: string;
+  old_start: string | null;
+  old_end: string | null;
+  new_start: string;
+  new_end: string;
+  chunks: RecoveryChunk[];
+}
+
+export interface RecoveryResult {
+  tasks: Task[];
+  moved: RecoveryMove[];
+  message: string;
+}
+
+export interface FreeSlot {
+  start: string;
+  end: string;
+  free_hours: number;
+}
+
+// --- Long-term behavioral memory --------------------------------------------
+// Compact facts derived from planned-vs-actual task timing (db.py's
+// task_events log) — never raw chat. Retrievable as AI context for chat.
+export interface MemoryFact {
+  id: number;
+  fact: string;
+  created_at: string;
 }
 
 export type ReminderKind = 'DEADLINE' | 'FOCUS_START' | 'CUSTOM';
@@ -145,6 +209,20 @@ export interface ChatMessage {
   system?: boolean; // engine/system note rendered distinctly in the chat
 }
 
+// Persisted chat (Firestore-backed via the backend, keyed by a client-generated
+// session id stored in localStorage).
+export interface PersistedChatMessage {
+  id: number;
+  role: 'user' | 'model';
+  content: string;
+  timestamp: string;
+}
+
+export interface ChatSession {
+  id: string;
+  messages: PersistedChatMessage[];
+}
+
 // --- AI Search Assistant --------------------------------------------------
 export interface SearchResults {
   tasks: Task[];
@@ -177,4 +255,20 @@ export interface Workflow extends WorkflowPlan {
   last_run: string | null;
   created_at: string;
   updated_at: string;
+}
+
+// --- AI Task Decomposition --------------------------------------------------
+export interface SubtaskDraft {
+  // Local to one decomposition draft, used only to express depends_on —
+  // replaced by the real Firestore task id once committed.
+  id: string;
+  title: string;
+  estimated_hours: number;
+  priority: Urgency;
+  depends_on: string[];
+}
+
+export interface DecompositionPlan {
+  goal: string;
+  subtasks: SubtaskDraft[];
 }

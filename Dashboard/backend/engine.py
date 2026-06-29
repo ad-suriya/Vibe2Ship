@@ -193,9 +193,28 @@ def _generate(contents, system_instruction, schema, max_attempts: int = 4):
 
 
 def chat(message: str, history: list[dict], now: Optional[datetime] = None,
-         busy: Optional[list[tuple[datetime, datetime]]] = None) -> EngineResponse:
+         busy: Optional[list[tuple[datetime, datetime]]] = None,
+         memory_facts: Optional[list[str]] = None,
+         open_tasks: Optional[list[dict]] = None) -> EngineResponse:
     now = now or datetime.now()
     system = f"{BASE_SYSTEM}\n\nCurrent datetime (local): {now.replace(microsecond=0).isoformat()}"
+    if open_tasks:
+        # The model previously had to reconstruct "what's due" purely from
+        # the visible chat transcript, which silently dropped any task it
+        # hadn't happened to mention recently — looked like it was guessing
+        # (or skipping the riskiest item) even though the data existed.
+        # Ground every factual answer in the real, current list instead.
+        lines = []
+        for t in open_tasks[:40]:
+            risk_part = f" | risk {t['risk']['risk_level']} ({t['risk']['risk_percent']}%)" if t.get("risk") else ""
+            deadline_part = f" | deadline {t['deadline']}" if t.get("deadline") else ""
+            lines.append(f"- [{t['id']}] {t['task_name']} | status {t['status']} | urgency {t['urgency']}{deadline_part}{risk_part}")
+        system += (
+            "\n\nThe user's CURRENT real task list (this is ground truth — answer "
+            "factual questions like \"what's due\" from this, not from memory of the "
+            "conversation, and don't omit a task just because it wasn't discussed "
+            "recently):\n" + "\n".join(lines)
+        )
     if busy:
         windows = "; ".join(f"{s.replace(microsecond=0).isoformat()} to {e.replace(microsecond=0).isoformat()}"
                              for s, e in busy[:20])
@@ -204,6 +223,15 @@ def chat(message: str, history: list[dict], now: Optional[datetime] = None,
             "When inferring a deadline or implying a time commitment, be aware a task can't "
             "realistically be scheduled inside these windows — factor that into urgency/estimates "
             "and mention the conflict in agent_message if it's relevant."
+        )
+    if memory_facts:
+        # Long-term behavioral memory (memory.py) — compact, durable facts
+        # learned from past planned-vs-actual timing, never raw chat. Use
+        # these to shape estimates/urgency/timing, not to repeat verbatim.
+        facts = "\n".join(f"- {f}" for f in memory_facts)
+        system += (
+            f"\n\nWhat's known about this user's actual work patterns (use this to inform "
+            f"estimates, urgency, and suggested timing — don't just repeat it back):\n{facts}"
         )
 
     contents = []
@@ -340,3 +368,102 @@ def generate_workflow(sop_text: str) -> WorkflowPlan:
     if not text:
         raise RuntimeError("No content returned from Gemini.")
     return WorkflowPlan.model_validate_json(text)
+
+
+# --- AI Task Decomposition --------------------------------------------------
+class SubtaskDraft(BaseModel):
+    # Short id local to this one decomposition, used only to express
+    # depends_on — never persisted or shown to the user. The real, durable
+    # id is the Firestore task id assigned once the subtask is committed.
+    id: str
+    title: str
+    estimated_hours: float
+    priority: Urgency
+    depends_on: List[str] = []
+
+
+class DecompositionPlan(BaseModel):
+    goal: str
+    subtasks: List[SubtaskDraft]
+
+
+DECOMPOSITION_SYSTEM = """\
+You break a large, vague goal into a concrete, executable list of subtasks \
+for a task-management app — the output becomes an execution graph (a \
+dependency-ordered timeline), not just a checklist.
+
+Rules:
+- Every subtask title must name a specific, actionable deliverable — never \
+  vague filler like "Planning" or "Research" on their own (e.g. "Design \
+  onboarding screen mockups", not "Design UI").
+- Give each subtask a short, unique lowercase snake_case id (e.g. \
+  "setup_backend") used only to express dependencies — never shown to the user.
+- estimated_hours must be a realistic, concrete number (not a range).
+- priority is HIGH/MEDIUM/LOW based on how blocking/urgent the subtask is to \
+  the overall goal.
+- depends_on lists the ids of OTHER subtasks in this same plan that must be \
+  finished first. Only add a dependency when the order is logically \
+  required (e.g. a testing subtask depends on the feature it tests; an \
+  integration subtask depends on the pieces it integrates). Don't invent \
+  dependencies that aren't real blockers, never depend on yourself, and \
+  never create a cycle.
+- Cover the whole goal end to end with the fewest subtasks that do that — \
+  don't pad the list.
+"""
+
+
+def decompose_goal(goal: str) -> DecompositionPlan:
+    response = _generate(
+        [{"role": "user", "parts": [{"text": goal}]}],
+        DECOMPOSITION_SYSTEM,
+        DecompositionPlan,
+    )
+    parsed = getattr(response, "parsed", None)
+    if isinstance(parsed, DecompositionPlan):
+        return parsed
+    text = getattr(response, "text", None)
+    if not text:
+        raise RuntimeError("No content returned from Gemini.")
+    return DecompositionPlan.model_validate_json(text)
+
+
+# --- Long-term behavioral memory --------------------------------------------
+class MemoryFacts(BaseModel):
+    facts: List[str]
+
+
+MEMORY_SYSTEM = """\
+You turn aggregate productivity statistics into a short list of compact, \
+durable facts about how this specific user actually works — the kind of \
+thing a thoughtful assistant would silently remember and factor into future \
+planning, like "User misses evening tasks" or "Coding tasks take 30% longer."
+
+You are given ONLY aggregate numbers (skip rates by time of day, duration \
+ratios by tag, average lateness) — never a task name, a raw event, or any \
+chat content. Stay at that same level of abstraction in your output: \
+general, durable patterns, not anything that reads like a specific incident.
+
+Rules:
+- Each fact is ONE short plain sentence (under 12 words), no hedging ("might", \
+  "could") — state it as an observed pattern.
+- Only state a fact the numbers actually support — if a number is weak/noisy \
+  (e.g. a rate near 50% either way, or based on very few events), omit it \
+  rather than overstating it.
+- At most 6 facts. Prefer fewer, stronger facts over padding the list.
+- If the numbers don't support ANY confident pattern yet, return an empty list.
+"""
+
+
+def summarize_memory(stats_text: str) -> MemoryFacts:
+    response = _generate(
+        [{"role": "user", "parts": [{"text": stats_text}]}],
+        MEMORY_SYSTEM,
+        MemoryFacts,
+    )
+    parsed = getattr(response, "parsed", None)
+    if isinstance(parsed, MemoryFacts):
+        return parsed
+    text = getattr(response, "text", None)
+    if not text:
+        raise RuntimeError("No content returned from Gemini.")
+    return MemoryFacts.model_validate_json(text)
